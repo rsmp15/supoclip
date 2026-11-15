@@ -10,7 +10,17 @@ import asyncio
 from contextvars import ContextVar
 from contextlib import contextmanager
 from functools import wraps
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    class _FcntlShim:
+        LOCK_SH = 1
+        LOCK_EX = 2
+        LOCK_NB = 4
+        LOCK_UN = 8
+        def flock(self, fd, operation):
+            pass
+    fcntl = _FcntlShim()
 import hashlib
 import json
 import mimetypes

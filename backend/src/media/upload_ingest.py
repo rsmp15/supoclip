@@ -15,7 +15,19 @@ that cannot see the file waits for it (``upload_copy_pending``).
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: no flock; single-process local installs only
+    class _FcntlShim:
+        LOCK_SH = 1
+        LOCK_EX = 2
+        LOCK_NB = 4
+        LOCK_UN = 8
+
+        def flock(self, fd, operation):
+            pass
+
+    fcntl = _FcntlShim()
 import hashlib
 import logging
 import os

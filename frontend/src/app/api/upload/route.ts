@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { buildBackendAuthHeaders } from "@/lib/backend-auth";
 import { backendTraceHeaders } from "@/server/backend-api";
 import { maxVideoUploadBytes, uploadTooLargeMessage } from "@/lib/video-upload";
+import { getServerSession } from "@/server/session";
 
 // Same slack the API allows for multipart boundaries around a file on the cap.
 const UPLOAD_FRAMING_BYTES = 1024 * 1024;
@@ -16,8 +17,16 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 1800;
 
 export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  let session = await getServerSession();
   if (!session?.user?.id) {
+    try {
+      session = await auth.api.getSession({ headers: await headers() });
+    } catch {
+      // ignore
+    }
+  }
+  const userId = session?.user?.id || (process.env.LOCAL_SINGLE_USER === "true" ? "local-user" : "");
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -46,7 +55,7 @@ export async function POST(request: Request) {
     "http://localhost:8000";
   const normalizedApiUrl = apiUrl.replace(/\/$/, "");
   const forwardHeaders: Record<string, string> = {
-    ...buildBackendAuthHeaders(session.user.id),
+    ...buildBackendAuthHeaders(userId),
     ...(await backendTraceHeaders()),
     "content-type": contentType,
     "content-length": declaredLength,

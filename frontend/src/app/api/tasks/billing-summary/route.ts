@@ -5,10 +5,19 @@ import { auth } from "@/lib/auth";
 import { buildBackendAuthHeaders } from "@/lib/backend-auth";
 import { backendTraceHeaders } from "@/server/backend-api";
 import { restorePastDueEntitlement } from "@/server/stripe-subscription-sync";
+import { getServerSession } from "@/server/session";
 
 export async function GET() {
-  const session = await auth.api.getSession({ headers: await headers() });
+  let session = await getServerSession();
   if (!session?.user?.id) {
+    try {
+      session = await auth.api.getSession({ headers: await headers() });
+    } catch {
+      // ignore
+    }
+  }
+  const userId = session?.user?.id || (process.env.LOCAL_SINGLE_USER === "true" ? "local-user" : "");
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -19,7 +28,7 @@ export async function GET() {
   const loadSummary = async () => {
     const upstream = await fetch(`${apiUrl}/tasks/billing/summary`, {
       method: "GET",
-      headers: { ...buildBackendAuthHeaders(session.user.id), ...(await backendTraceHeaders()) },
+      headers: { ...buildBackendAuthHeaders(userId), ...(await backendTraceHeaders()) },
       cache: "no-store",
     });
     return { upstream, responseText: await upstream.text() };
@@ -28,7 +37,7 @@ export async function GET() {
   let { upstream, responseText } = await loadSummary();
   if (upstream.ok && storedPastDuePlanIsFree(responseText)) {
     try {
-      if (await restorePastDueEntitlement(session.user.id)) {
+      if (await restorePastDueEntitlement(userId)) {
         ({ upstream, responseText } = await loadSummary());
       }
     } catch (error) {

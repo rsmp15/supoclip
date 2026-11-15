@@ -54,6 +54,8 @@
     "@electric-sql/pglite": "^0.5.8",
     "@eslint/eslintrc": "^3.3.4",
     "@playwright/test": "^1.55.0",
+    "@swc/core": "1.15.33",
+    "@swc/core-win32-x64-msvc": "^1.15.33",
     "@tailwindcss/postcss": "^4.2.1",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",

@@ -8,7 +8,17 @@ and download a new range only when the cut extends past what is stored.
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    class _FcntlShim:
+        LOCK_SH = 1
+        LOCK_EX = 2
+        LOCK_NB = 4
+        LOCK_UN = 8
+        def flock(self, fd, operation):
+            pass
+    fcntl = _FcntlShim()
 import json
 import logging
 import shutil

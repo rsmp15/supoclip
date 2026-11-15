@@ -87,4 +87,40 @@ export const auth = betterAuth({
   ],
 });
 
+export const LOCAL_DEV_AUTH_SESSION = {
+  user: {
+    id: "local-user",
+    name: "Local Creator",
+    email: "creator@localhost",
+    emailVerified: true,
+    is_admin: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  },
+  session: {
+    id: "local-session",
+    userId: "local-user",
+    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  },
+};
+
+const rawGetSession = auth.api?.getSession?.bind(auth.api);
+if (auth.api && process.env.LOCAL_SINGLE_USER === "true") {
+  (auth.api as any).getSession = async (context?: any) => {
+    try {
+      if (rawGetSession) {
+        const session = await rawGetSession(context);
+        if (session?.user?.id) {
+          return session;
+        }
+      }
+    } catch {
+      // Fall back to local dev session on localhost
+    }
+    return LOCAL_DEV_AUTH_SESSION as any;
+  };
+}
+
 export type Session = typeof auth.$Infer.Session;

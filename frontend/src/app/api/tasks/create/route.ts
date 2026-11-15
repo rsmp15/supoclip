@@ -4,10 +4,19 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { buildBackendAuthHeaders } from "@/lib/backend-auth";
 import { backendTraceHeaders } from "@/server/backend-api";
+import { getServerSession } from "@/server/session";
 
 export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  let session = await getServerSession();
   if (!session?.user?.id) {
+    try {
+      session = await auth.api.getSession({ headers: await headers() });
+    } catch {
+      // ignore
+    }
+  }
+  const userId = session?.user?.id || (process.env.LOCAL_SINGLE_USER === "true" ? "local-user" : "");
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -21,7 +30,7 @@ export async function POST(request: Request) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...buildBackendAuthHeaders(session.user.id),
+      ...buildBackendAuthHeaders(userId),
       ...(await backendTraceHeaders()),
       ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
     },

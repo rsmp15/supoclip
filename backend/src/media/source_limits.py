@@ -12,7 +12,19 @@ stored original is capped again the next time it is prepared.
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: no flock; single-process local installs only
+    class _FcntlShim:
+        LOCK_SH = 1
+        LOCK_EX = 2
+        LOCK_NB = 4
+        LOCK_UN = 8
+
+        def flock(self, fd, operation):
+            pass
+
+    fcntl = _FcntlShim()
 import json
 import logging
 import os
