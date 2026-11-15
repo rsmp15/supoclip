@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import secrets
 import shutil
@@ -196,6 +197,13 @@ def proxy_configured(config=None) -> bool:
     return bool((getattr(runtime, "youtube_proxy_url", "") or "").strip())
 
 
+def audio_first_enabled(config=None) -> bool:
+    """Audio-first analysis + section-only rendering: always with a proxy, or opt-in without one."""
+    if proxy_configured(config):
+        return True
+    return (os.getenv("YOUTUBE_AUDIO_FIRST") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def capped_height(value: int | None = None, config=None) -> int:
     """Never request above 1080p. Lower env values are honored."""
     runtime = config or get_config()
@@ -347,7 +355,8 @@ def base_proxy_params(task_id: Optional[str] = None, video_id: Optional[str] = N
         getattr(runtime, "youtube_proxy_country", "") if country is None else country
     )
     params: dict[str, Any] = {
-        "proxy": render_proxy_url(runtime.youtube_proxy_url, session, country),
+        # YOUTUBE_AUDIO_FIRST without a proxy goes direct (no "proxy" key).
+        **({"proxy": render_proxy_url(runtime.youtube_proxy_url, session, country)} if proxy_configured(runtime) else {}),
         # yt-dlp treats 0.0.0.0 as "force IPv4" (the -4 flag).
         "source_address": "0.0.0.0",
         "socket_timeout": 30,

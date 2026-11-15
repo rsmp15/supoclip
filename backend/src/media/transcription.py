@@ -331,6 +331,18 @@ def get_video_transcript(
     runtime_config = get_config()
     provider = runtime_config.transcription_provider
 
+    # A transcript dropped into TRANSCRIPT_IMPORT_DIR (e.g. from Gemini) wins over
+    # every provider: no audio processing, and it keeps the creator's corrections.
+    from .transcript_import import find_imported_transcript, load_imported_transcript
+
+    imported = find_imported_transcript(video_path, source_url)
+    if imported is not None:
+        result = load_imported_transcript(imported)
+        formatted_lines = format_transcript_for_analysis(result)
+        cache_transcript_data(video_path, result)
+        logger.info("Using imported transcript %s (%d segments)", imported.name, len(formatted_lines))
+        return "\n".join(formatted_lines)
+
     if provider == "whisper":
         return _get_transcript_with_whisper(video_path, runtime_config)
     if provider == "youtube_captions":

@@ -512,3 +512,9 @@ def get_config() -> Config:
 def set_config_override(config: Config | None) -> None:
     global _config_override
     _config_override = config
+
+
+# Native installs: make sure yt-dlp can solve YouTube challenges (see ytdlp_runtime.py).
+from .ytdlp_runtime import install as _install_ytdlp_runtime  # noqa: E402
+
+_install_ytdlp_runtime()

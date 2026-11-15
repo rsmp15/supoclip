@@ -64,7 +64,9 @@ _download_locks: Dict[str, asyncio.Lock] = {}
 
 
 def broll_configured() -> bool:
-    return bool(get_config().pexels_api_key)
+    from . import local_broll
+
+    return bool(get_config().pexels_api_key) or local_broll.configured()
 
 
 def broll_cache_dir() -> Path:
@@ -360,6 +362,8 @@ def footage_mismatch(video: Dict[str, Any], query: str, context: str = "") -> Op
 
 
 def broll_file_path(entry: Dict[str, Any]) -> Path:
+    if entry.get("provider") == "local" and entry.get("local_path"):
+        return Path(entry["local_path"])
     return broll_cache_dir() / (
         f"pexels_{int(entry['pexels_id'])}_{int(entry['width'])}x{int(entry['height'])}.mp4"
     )
@@ -434,8 +438,11 @@ async def ensure_broll_file(entry: Dict[str, Any]) -> Optional[Path]:
     lock = _download_locks.setdefault(str(path), asyncio.Lock())
     async with lock:
         if path.is_file() and path.stat().st_size > 0:
-            path.touch()
+            if entry.get("provider") != "local":
+                path.touch()
             return path
+        if entry.get("provider") == "local":
+            return None
         if not entry.get("file_url") or not await _download(entry["file_url"], path):
             return None
         # A 200 can still be an error page or a truncated file, and one bad
@@ -571,6 +578,20 @@ async def _source_cue(
     target_short_side: int,
     session: BRollSession,
 ) -> Optional[Dict[str, Any]]:
+    from . import local_broll
+
+    if local_broll.configured():
+        local = await asyncio.to_thread(
+            local_broll.find, (cue["query"], cue.get("fallback_query") or ""), cue["duration"] + 0.5,
+            session.used_ids, orientation,
+        )
+        if local:
+            session.used_ids.add(local["pexels_id"])
+            return {"start": cue["start"], "duration": cue["duration"], "query": cue["query"], **local}
+        if local_broll.local_only():
+            return None
+    if not get_config().pexels_api_key:
+        return None
     for query in dict.fromkeys(q for q in (cue["query"], cue.get("fallback_query")) if q):
         videos = await search_pexels_videos(query, orientation)
         video = choose_video(

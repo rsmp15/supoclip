@@ -32,6 +32,7 @@ from ..youtube_proxy import (
     PartialDownloadUnavailable,
     YouTubeGeoRestrictedError,
     proxy_configured,
+    audio_first_enabled,
     public_download_error,
 )
 from ..youtube_source import (
@@ -1413,7 +1414,7 @@ class VideoService:
                 )
                 # Audio first only when a proxy is configured and we do not
                 # already have the full source cached. Uploads never reach here.
-                if proxy_configured(runtime_config) and video_id and not cached_full:
+                if audio_first_enabled(runtime_config) and video_id and not cached_full:
                     def _resolve_analysis():
                         def _download_full():
                             return resolve_full_youtube_download(
@@ -1561,6 +1562,16 @@ class VideoService:
             final_plan = False
             if workflow == "highlights":
                 instructions = workflow_spec.options.instructions if workflow_spec is not None else ""
+                if source_type == "youtube":
+                    # Published live streams keep their chat replay: its hype spikes point at the
+                    # moments worth clipping. Off unless CHAT_SIGNALS=true; "" when there is no replay.
+                    from ..chat_signals import hype_block
+
+                    if progress_callback:
+                        await progress_callback(32, "Reading live chat replay...", "processing")
+                    chat_hint = await run_in_thread(hype_block, url)
+                    if chat_hint:
+                        instructions = f"{instructions}\n\n{chat_hint}".strip()
                 requested_clips = workflow_spec.setting("max_clips") if workflow_spec is not None else None
                 relevant_parts, segments_json, clip_limit, final_plan = await VideoService._select_highlight_segments(
                     video_path=video_path,

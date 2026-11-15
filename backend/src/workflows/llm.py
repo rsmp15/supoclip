@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-CALL_TIMEOUT_SECONDS = 600
+CALL_TIMEOUT_SECONDS = int(__import__("os").getenv("WORKFLOW_CALL_TIMEOUT_SECONDS", "600") or 600)
 # More issues than this means the answer misunderstood the task; a repair
 # round would only rewrite it. The deterministic solver takes it from there.
 MAX_REPAIRABLE_ISSUES = 15
