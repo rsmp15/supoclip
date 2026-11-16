@@ -732,6 +732,59 @@ async def restore_session_media(storage, directory: Path, *, has_layout: bool = 
         raise FileNotFoundError("The editor's source video is no longer stored")
 
 
+def _live_editor_source(clip: dict):
+    """A Live clip's unedited cut (raw.mp4) and its live meta, or (None, None).
+
+    Live clips come from a live stream that can no longer be downloaded at those timestamps, so the studio edits the
+    raw cut the live clipper recorded. Its Whisper words are written as the transcript cache the studio reads.
+    """
+    meta = clip.get("workflow_meta")
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except ValueError:
+            meta = {}
+    rel = (meta or {}).get("live_clip")
+    if not rel:
+        return None, None
+    try:
+        from ..live import manager as live_manager
+
+        d = live_manager.clip_path(rel)
+    except Exception:
+        return None, None
+    raw = d / "raw.mp4"
+    return (raw, live_manager.read_meta(d) or {}) if raw.exists() else (None, None)
+
+
+def _write_live_transcript(clip_dir: Path, source: Path) -> None:
+    """raw.words.json ({words: [{w, s, e}]}, seconds) -> <source>.transcript_cache.json (milliseconds)."""
+    from ..media.transcription import TRANSCRIPT_CACHE_SCHEMA_VERSION
+
+    words_file = clip_dir / "raw.words.json"
+    words = []
+    if words_file.exists():
+        try:
+            words = json.loads(words_file.read_text("utf-8")).get("words") or []
+        except ValueError:
+            words = []
+    data = [{"text": w["w"], "start": int(float(w["s"]) * 1000), "end": int(float(w["e"]) * 1000),
+             "confidence": 1.0, "speaker": None} for w in words if w.get("w")]
+    source.with_suffix(".transcript_cache.json").write_text(json.dumps({
+        "version": TRANSCRIPT_CACHE_SCHEMA_VERSION, "words": data,
+        "utterances": [{"text": " ".join(w["text"] for w in data), "start": data[0]["start"] if data else 0,
+                        "end": data[-1]["end"] if data else 0, "speaker": None, "words": data}],
+        "text": " ".join(w["text"] for w in data), "language_code": "en"}), "utf-8")
+
+
+def _media_seconds(path: Path) -> float:
+    import subprocess
+
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True, timeout=60).stdout.strip()
+    return float(out or 0)
+
+
 @media_work
 async def prepare_editor(ctx, task_id: str, clip_id: str, filename: str):
     from ..database import AsyncSessionLocal
@@ -788,9 +841,21 @@ async def prepare_editor(ctx, task_id: str, clip_id: str, filename: str):
 
             broll_placements = load_clip_broll(caption_path)
             await db.close()
-            source, downloaded_source, local_ranges = await _editor_source(
-                service, storage, task_id, task, cached_source, ranges, download_quality
-            )
+            live_raw, live_meta = _live_editor_source(clip)
+            if live_raw is not None:
+                # The live clipper's own recording: no download, the whole cut, its own words.
+                source = await service.video_service.prepare_source(live_raw)
+                seconds = await run_in_thread(_media_seconds, source)
+                ranges = local_ranges = [(0.0, seconds)]
+                downloaded_source = None
+                await run_in_thread(_write_live_transcript, live_raw.parent, source)
+                source_settings = {**source_settings, "output_format": {
+                    "facecam": "vertical_split", "face": "vertical", "vertical": "vertical_fit",
+                }.get(live_meta.get("layout"), "vertical_fit")}
+            else:
+                source, downloaded_source, local_ranges = await _editor_source(
+                    service, storage, task_id, task, cached_source, ranges, download_quality
+                )
             directory.mkdir(parents=True, exist_ok=True)
             # A rebuilt session must not pick up this machine's earlier media.
             for name in EDITOR_MEDIA_NAMES:

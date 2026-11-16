@@ -217,3 +217,8 @@ left out on purpose, because libass renders them in their Thin weight. THE BOLD 
   Change it with `CLIPFORGE_BROLL_CATALOG` / `CLIPFORGE_BROLL_DIRS`. The current library is lifestyle footage;
   gaming-specific clips (explosions, sirens, crowd cheers) would fit stream clips better.
 - The clip card lists which words triggered which clip.
+
+## Library dialog and the clip studio for live clips
+
+- **Library dialog:** the clip popup shows **Captions & descriptions** (YouTube title + description + tags, Instagram and TikTok captions). For live clips the copy is editable (Save / Regenerate); other clips get generated copy to copy. Live clips fill SupoClip's four 0–25 scores from the live virality parts (hook, reaction → engagement, length + speech → value, chat spike → shareability).
+- **Open in editor:** a live clip opens in the clip studio with its own **raw cut** (`raw.mp4` from the live clipper) as the source, so nothing is downloaded from the live stream. Its Whisper words become the editable caption track. The studio starts with a centred vertical crop; adjust it in **Framing**.

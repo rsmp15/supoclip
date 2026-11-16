@@ -19,6 +19,19 @@ from .engine import social_copy
 
 logger = logging.getLogger(__name__)
 IMPORTABLE = {"needs_review", "approved", "posted"}
+IMPORTER_VERSION = 2          # bump to re-sync every imported clip (2: 0-25 sub-scores)
+
+
+def _subscores(vir):
+    """Live virality parts -> SupoClip's four 0-25 scores (hook, engagement, value, shareability)."""
+    parts = {p["label"]: p for p in vir.get("parts", [])}
+
+    def scaled(*labels):
+        got = sum(parts[l]["points"] for l in labels if l in parts)
+        mx = sum(parts[l]["max"] for l in labels if l in parts) or 1
+        return int(round(got / mx * 25))
+    return {"Hook": scaled("Hook"), "Reaction purity": scaled("Reaction purity", "Visible reaction"),
+            "Value": scaled("Length", "Speech / captions"), "Chat spike": scaled("Chat spike")}
 
 
 def _int(v) -> int:
@@ -81,18 +94,20 @@ async def _import_one(d: Path, meta: Dict[str, Any], tasks: Dict[str, Any]) -> N
         if order is None:
             order = entry["next_order"]; entry["next_order"] += 1
         chat = " | ".join(meta.get("top_chat", [])[:4])
+        vir = social_copy.virality(meta)
+        sub = _subscores(vir)
         clip_id = await ClipRepository.create_clip(
             db, entry["task_id"], filename=f"{d.name}.mp4", file_path=str(copy), start_time=_mmss(start),
             end_time=_mmss(end), duration=round(end - start, 2), text=meta.get("transcript") or chat,
             relevance_score=min(1.0, float(meta.get("ratio") or 0) / 5), clip_order=order,
             reasoning=f"Live chat spike x{meta.get('ratio')} vs the stream's baseline. Chat: {chat}"[:1000],
-            virality_score=int(social_copy.virality(meta)["score"]), hook_score=_int(meta.get("hook_score")),
-            hook_type="reaction",
+            virality_score=vir["score"], hook_score=sub["Hook"], engagement_score=sub["Reaction purity"],
+            value_score=sub["Value"], shareability_score=sub["Chat spike"], hook_type="reaction",
             hook_title=meta.get("hook") or None, workflow_meta={"live_clip": d.relative_to(manager.clips_dir()).as_posix()})
         await db.commit()
     meta = manager.read_meta(d) or meta
     meta["supoclip"] = {"task_id": entry["task_id"], "clip_id": clip_id, "clip_order": order,
-                        "version": int(final.stat().st_mtime)}
+                        "version": int(final.stat().st_mtime), "importer": IMPORTER_VERSION}
     manager.write_meta(d, meta)
     _task_map_path().write_text(json.dumps(tasks, indent=1), "utf-8")
     logger.info("live clip %s imported into task %s", d.name, entry["task_id"])
@@ -107,7 +122,8 @@ async def import_pending() -> int:
             continue
         sc = meta.get("supoclip") or {}
         version = int(final.stat().st_mtime)
-        if sc.get("version") == version or (sc.get("failed_version") == version and sc.get("attempts", 0) >= 3):
+        current = sc.get("version") == version and sc.get("importer") == IMPORTER_VERSION
+        if current or (sc.get("failed_version") == version and sc.get("attempts", 0) >= 3):
             continue
         try:
             await _import_one(d, meta, tasks); n += 1

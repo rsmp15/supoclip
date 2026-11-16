@@ -10,6 +10,7 @@ import {
 import { ClipCover, ScoreRing } from "@/components/app/clip-cover";
 import DynamicVideoPlayer from "@/components/dynamic-video-player";
 import { TranscriptPreview } from "@/components/transcript-preview";
+import { SocialCopyPanel } from "@/components/app/social-copy-panel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -285,6 +286,7 @@ export function ClipFocus({ clip, taskId, index, total, busy, editable, onNaviga
                 )}
 
                 {clip.text && <TranscriptPreview text={clip.text} clipTitle={clipTitle(clip, t)} />}
+                {taskId && <SocialCopyPanel key={clip.id} taskId={taskId} clipId={clip.id} />}
                 {children}
               </div>
               <div className="mt-auto flex flex-wrap items-center gap-2 border-t bg-muted/30 px-5 py-3">

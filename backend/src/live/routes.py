@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..database import get_db
 from fastapi.responses import FileResponse
 
 from ..auth_headers import get_authenticated_user_id
@@ -110,6 +113,43 @@ async def restart_session(sid: str, request: Request):
     s.stopped, s.restarts = False, 0
     await run_in_thread(s.start)
     return {"ok": True}
+
+
+@router.get("/library-copy")
+async def library_copy(request: Request, task_id: str, clip_id: str, db: AsyncSession = Depends(get_db)):
+    """Per-platform captions/descriptions for a Library clip. Live clips return their editable copy; other clips get
+    copy generated from the clip's transcript and hook (read-only)."""
+    from ..repositories.clip_repository import ClipRepository
+    from ..repositories.task_repository import TaskRepository
+    from .engine import social_copy
+    import json as _json
+
+    user_id = _user(request)
+    task = await TaskRepository.get_task_by_id(db, task_id)
+    if not task or task.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    clip = await ClipRepository.get_clip_by_id(db, clip_id)
+    if not clip or clip.get("task_id") != task_id:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    wf = clip.get("workflow_meta") or {}
+    if isinstance(wf, str):
+        try:
+            wf = _json.loads(wf)
+        except ValueError:
+            wf = {}
+    rel = wf.get("live_clip")
+    if rel:
+        try:
+            view = manager.clip_view(manager.clip_path(rel))
+        except FileNotFoundError:
+            view = None
+        if view and view.get("social_copy"):
+            return {"source": "live", "rel": rel, "social_copy": view["social_copy"],
+                    "edited": view.get("social_copy_edited", []), "virality": view.get("virality")}
+    meta = {"hook": clip.get("hook_title") or "", "yt_title": clip.get("hook_title") or "", "transcript": clip.get("text") or "",
+            "channel": task.get("source_title") or "", "source_url": task.get("source_url") or "",
+            "clip_start": 0, "clip_end": float(clip.get("duration") or 0), "hype_kind": "hype"}
+    return {"source": "generated", "rel": None, "social_copy": social_copy.generate(meta), "edited": []}
 
 
 @router.get("/clips")
