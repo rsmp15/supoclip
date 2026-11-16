@@ -15,9 +15,17 @@ from pathlib import Path
 from typing import Any, Dict
 
 from . import manager
+from .engine import social_copy
 
 logger = logging.getLogger(__name__)
 IMPORTABLE = {"needs_review", "approved", "posted"}
+
+
+def _int(v) -> int:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _mmss(sec: float) -> str:
@@ -78,7 +86,8 @@ async def _import_one(d: Path, meta: Dict[str, Any], tasks: Dict[str, Any]) -> N
             end_time=_mmss(end), duration=round(end - start, 2), text=meta.get("transcript") or chat,
             relevance_score=min(1.0, float(meta.get("ratio") or 0) / 5), clip_order=order,
             reasoning=f"Live chat spike x{meta.get('ratio')} vs the stream's baseline. Chat: {chat}"[:1000],
-            virality_score=int(min(100, float(meta.get("ratio") or 0) * 20)), hook_type="reaction",
+            virality_score=int(social_copy.virality(meta)["score"]), hook_score=_int(meta.get("hook_score")),
+            hook_type="reaction",
             hook_title=meta.get("hook") or None, workflow_meta={"live_clip": d.relative_to(manager.clips_dir()).as_posix()})
         await db.commit()
     meta = manager.read_meta(d) or meta

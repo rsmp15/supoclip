@@ -74,12 +74,17 @@ def _check_publishable(meta, platforms):
 
 
 def _texts(meta):
-    title = (meta.get("yt_title") or meta.get("hook") or "").strip()
+    """Per-platform copy from social_copy (keeps the user's edits); falls back to the old single description."""
+    import social_copy
+    social_copy.ensure(meta)
+    yt, ig = meta["social_copy"]["youtube"], meta["social_copy"]["instagram"]
+    title = (yt.get("title") or meta.get("yt_title") or meta.get("hook") or "").strip()
     if "#shorts" not in title.lower() and len(title) + 8 <= 100:
         title += " #shorts"
-    desc = meta.get("description", "")
-    caption = desc[:2100]                                  # Instagram caption limit is 2,200 chars
-    return title[:100], desc[:5000], caption
+    desc = yt.get("description") or meta.get("description", "")
+    caption = ig.get("caption") or desc[:2100]             # Instagram caption limit is 2,200 chars
+    meta["tags"] = yt.get("tags") or meta.get("tags", [])
+    return title[:100], desc[:5000], caption[:2200]
 
 
 def publish_postiz(clip, meta, platforms, privacy, dry_run=False, log=print):

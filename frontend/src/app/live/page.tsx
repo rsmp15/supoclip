@@ -25,7 +25,24 @@ type LiveClip = {
   top_chat: string[]; created: string; length: number; has_final: boolean; version: number; description: string;
   render_error?: string | null; published?: Record<string, { ok?: boolean; url?: string }>;
   supoclip?: { task_id: string; clip_id: string } | null;
+  transcript?: string;
+  virality?: Virality | null;
+  social_copy?: SocialCopy | null;
+  social_copy_edited?: string[];
 };
+type Virality = { score: number; grade: string; parts: { label: string; points: number; max: number; note: string }[] };
+type SocialCopy = {
+  youtube: { title: string; description: string; tags: string[] };
+  instagram: { caption: string };
+  tiktok: { caption: string };
+};
+type CopyPlatform = keyof SocialCopy;
+const LIMITS: Record<CopyPlatform, { label: string; max: number; ideal?: number }> = {
+  youtube: { label: "YouTube", max: 5000 },
+  instagram: { label: "Instagram", max: 2200 },
+  tiktok: { label: "TikTok", max: 2200, ideal: 150 },
+};
+const GRADE_STYLE: Record<string, string> = { A: "bg-emerald-500", B: "bg-lime-500", C: "bg-amber-500", D: "bg-red-500" };
 type SystemView = { cpu?: number; ram?: number; ram_free_gb?: number; disk_free_gb?: number; sessions: number; queue: number; rendering: number; review: number };
 type LiveSettings = { renderers: number; max_height: number; hours: number; k: number; model: string; query: string; auto_search: boolean; privacy: string };
 
@@ -306,6 +323,12 @@ function ClipCard({ clip: c, onAction, onPublish }: { clip: LiveClip; onAction: 
   return (
     <div className="relative overflow-hidden rounded-xl border bg-background">
       <span className={cn("absolute left-2 top-2 z-10 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase", CLIP_STYLE[c.status] ?? "bg-muted")}>{c.status.replace("_", " ")}</span>
+      {c.virality && (
+        <span title={c.virality.parts.map((p) => `${p.label}: ${p.points}/${p.max} (${p.note})`).join("\n")}
+          className={cn("absolute right-2 top-2 z-10 rounded-full px-2 py-0.5 text-[11px] font-bold text-black", GRADE_STYLE[c.virality.grade] ?? "bg-muted")}>
+          🔥 {c.virality.score} · {c.virality.grade}
+        </span>
+      )}
       {c.has_final && !busy ? (
         <video src={`${base}/video?v=${c.version}`} controls preload="metadata" playsInline className="aspect-[9/16] max-h-[520px] w-full bg-black object-contain" />
       ) : (
@@ -329,10 +352,73 @@ function ClipCard({ clip: c, onAction, onPublish }: { clip: LiveClip; onAction: 
           <Button size="sm" variant="secondary" disabled={c.status !== "approved"} onClick={onPublish}>Publish</Button>
           {c.supoclip && <Button size="sm" variant="ghost" asChild><Link href={`/tasks/${c.supoclip.task_id}`}><FolderOpen className="size-3.5" /> Library</Link></Button>}
         </div>
+        {c.virality && (
+          <details className="rounded-md border px-2 py-1 text-xs">
+            <summary className="cursor-pointer font-medium">Virality score {c.virality.score}/100 · grade {c.virality.grade}</summary>
+            <ul className="mt-1.5 space-y-1">
+              {c.virality.parts.map((p) => (
+                <li key={p.label}>
+                  <div className="flex justify-between"><span>{p.label}</span><b>{p.points}/{p.max}</b></div>
+                  <div className="h-1.5 rounded bg-muted"><div className="h-1.5 rounded bg-primary" style={{ width: `${(p.points / p.max) * 100}%` }} /></div>
+                  <span className="text-[11px] text-muted-foreground">{p.note}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-[11px] text-muted-foreground">A heuristic from the live-chat signal, not a view prediction.</p>
+          </details>
+        )}
+        <details className="rounded-md border px-2 py-1 text-xs">
+          <summary className="cursor-pointer font-medium">Transcript</summary>
+          <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-muted-foreground">{c.transcript || "No speech detected in this clip (chat-only reaction)."}</p>
+        </details>
+        {c.social_copy && <CaptionEditor key={JSON.stringify(c.social_copy)} clip={c} base={base} onAction={onAction} />}
         {pubs.length > 0 && <p className="text-xs text-muted-foreground">Published: {pubs.map(([p, r]) => r.url ? <a key={p} href={r.url} target="_blank" rel="noreferrer" className="mr-2 text-primary underline">{p}</a> : <span key={p} className="mr-2">{p}{r.ok ? " (queued)" : ""}</span>)}</p>}
         {c.render_error && c.status !== "needs_review" && <p className="max-h-20 overflow-auto whitespace-pre-wrap text-[11px] text-red-600">{c.render_error.slice(-300)}</p>}
       </div>
     </div>
+  );
+}
+
+function CaptionEditor({ clip: c, base, onAction }: { clip: LiveClip; base: string; onAction: (path: string, body?: unknown) => Promise<void> }) {
+  const [platform, setPlatform] = useState<CopyPlatform>("youtube");
+  const [copy, setCopy] = useState<SocialCopy>(c.social_copy as SocialCopy);
+  const limit = LIMITS[platform];
+  const text = platform === "youtube" ? copy.youtube.description : copy[platform].caption;
+  const setText = (v: string) => setCopy((o) => (platform === "youtube"
+    ? { ...o, youtube: { ...o.youtube, description: v } }
+    : { ...o, [platform]: { caption: v } }));
+  const full = platform === "youtube" ? `${copy.youtube.title}\n\n${copy.youtube.description}` : text;
+  const edited = (c.social_copy_edited ?? []).includes(platform);
+  return (
+    <details className="rounded-md border px-2 py-1 text-xs" open>
+      <summary className="cursor-pointer font-medium">Captions & descriptions</summary>
+      <div className="mt-1.5 flex gap-1">
+        {(Object.keys(LIMITS) as CopyPlatform[]).map((p) => (
+          <button key={p} type="button" onClick={() => setPlatform(p)}
+            className={cn("rounded-md border px-2 py-0.5", platform === p ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground")}>
+            {LIMITS[p].label}
+          </button>
+        ))}
+      </div>
+      {platform === "youtube" && (
+        <label className="mt-1.5 block text-[11px] text-muted-foreground">Title ({copy.youtube.title.length}/100)
+          <Input value={copy.youtube.title} maxLength={100} className="mt-0.5 h-7 text-xs"
+            onChange={(e) => setCopy((o) => ({ ...o, youtube: { ...o.youtube, title: e.target.value } }))} /></label>
+      )}
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={platform === "tiktok" ? 3 : 7}
+        className="mt-1.5 w-full rounded-md border bg-background p-1.5 text-xs leading-snug" />
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span className={cn(text.length > limit.max && "text-red-600", limit.ideal && text.length > limit.ideal && "text-amber-600")}>
+          {text.length}/{limit.max}{limit.ideal ? ` · best under ~${limit.ideal}` : ""}{edited ? " · edited" : " · auto"}
+        </span>
+        {platform === "youtube" && <span className="truncate pl-2" title={copy.youtube.tags.join(", ")}>{copy.youtube.tags.length} tags</span>}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-1.5 pb-1">
+        <Button size="sm" variant="outline" className="h-7" onClick={() => { navigator.clipboard.writeText(full); toast.success("Copied"); }}>Copy</Button>
+        <Button size="sm" variant="outline" className="h-7" onClick={() => onAction(`${base}/update`, { social_copy: { [platform]: copy[platform] } })}>Save</Button>
+        <Button size="sm" variant="ghost" className="h-7" onClick={() => onAction(`${base}/update`, { regenerate_copy: platform })}>Regenerate</Button>
+      </div>
+    </details>
   );
 }
 
@@ -359,8 +445,12 @@ function PublishDialog({ clip, onClose, onDone }: { clip: LiveClip | null; onClo
       if (via === "supoclip") {
         if (!clip.supoclip) throw new Error("This clip is not in the Library yet (it imports a few seconds after rendering).");
         for (const id of picked) {
+          const provider = accounts.find((a) => a.id === id)?.provider;
+          const copy = clip.social_copy;
+          const caption = provider === "youtube" ? copy?.youtube.description
+            : provider === "instagram" ? copy?.instagram.caption : provider === "tiktok" ? copy?.tiktok.caption : undefined;
           await api("/api/social/posts", { task_id: clip.supoclip.task_id, clip_id: clip.supoclip.clip_id, social_account_id: id,
-            title: clip.yt_title, caption: clip.description, privacy_level: privacy });
+            title: copy?.youtube.title || clip.yt_title, caption: caption || clip.description, privacy_level: privacy });
         }
         await api(`/api/live/clips/${clipPath(clip.rel)}/update`, { status: "posted" });
       } else {
@@ -399,7 +489,7 @@ function PublishDialog({ clip, onClose, onDone }: { clip: LiveClip | null; onClo
             <select value={privacy} onChange={(e) => setPrivacy(e.target.value)} className="rounded-md border bg-background px-2 py-1">
               <option>public</option><option>unlisted</option><option>private</option>
             </select></label>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-xs text-muted-foreground">{clip.description}</pre>
+          <p className="text-xs text-muted-foreground">Each platform gets its own caption from the clip card&apos;s Captions panel.</p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>

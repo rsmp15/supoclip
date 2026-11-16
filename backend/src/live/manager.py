@@ -333,7 +333,14 @@ def _renderer(n: int) -> None:
 
 
 def clip_view(d: Path) -> Dict[str, Any]:
+    from .engine import social_copy
+
     m = read_meta(d) or {}
+    if m.get("status") in ("needs_review", "approved", "posted", "rejected"):
+        with _lock:
+            m = read_meta(d) or m
+            if social_copy.ensure(m):          # per-platform captions + virality, kept in meta.json
+                write_meta(d, m)
     rel = d.relative_to(clips_dir()).as_posix()
     final = d / "final.mp4"
     return dict(rel=rel, status=m.get("status"), hook=m.get("hook", ""), yt_title=m.get("yt_title", ""),
@@ -342,7 +349,9 @@ def clip_view(d: Path) -> Dict[str, Any]:
                 length=round((m.get("clip_end") or 0) - (m.get("clip_start") or 0), 1), layout=m.get("layout"),
                 has_final=final.exists(), version=int(final.stat().st_mtime) if final.exists() else 0,
                 description=m.get("description", ""), published=m.get("published", {}), source_url=m.get("source_url"),
-                render_error=m.get("render_error"), supoclip=m.get("supoclip"))
+                render_error=m.get("render_error"), supoclip=m.get("supoclip"),
+                transcript=m.get("transcript", ""), virality=m.get("virality"), social_copy=m.get("social_copy"),
+                social_copy_edited=m.get("social_copy_edited", []))
 
 
 def update_clip(rel: str, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -363,6 +372,17 @@ def update_clip(rel: str, body: Dict[str, Any]) -> Dict[str, Any]:
             if status == "posted" and m.get("status") not in ("approved", "posted"):
                 raise ValueError("only approved clips can be marked posted")
             m["status"] = status
+        copy = body.get("social_copy")
+        if isinstance(copy, dict):                       # user edits to a platform's caption/description
+            cur, edited = m.get("social_copy") or {}, set(m.get("social_copy_edited") or [])
+            for platform, fields in copy.items():
+                if platform in ("youtube", "instagram", "tiktok") and isinstance(fields, dict):
+                    clean = {k: v for k, v in fields.items() if k in ("title", "description", "caption", "tags")}
+                    cur[platform] = {**cur.get(platform, {}), **clean}; edited.add(platform)
+            m["social_copy"], m["social_copy_edited"] = cur, sorted(edited)
+        regen = body.get("regenerate_copy")
+        if regen:                                        # drop edits -> the generator rewrites that platform
+            m["social_copy_edited"] = [] if regen == "all" else [p for p in m.get("social_copy_edited", []) if p != regen]
         if body.get("rerender") or rerender:
             m["status"], m["edit_attempts"] = "needs_edit", 0
         write_meta(d, m)

@@ -127,3 +127,32 @@ uses at `http://localhost:3107/api/live/...`. Repeat every few minutes while ses
 4. **Never publish** without the user's explicit go-ahead for that clip. Publishing is the user's Publish button.
 5. API down (no answer on :8000) → run `start-local.bat`. Half-rendered clips recover by themselves.
    Give up on a session after 3 code fixes that didn't help, and tell the user what is failing.
+
+## Captions, descriptions and virality score (per platform, no API)
+
+Every reviewed clip gets platform-specific post copy from `engine/social_copy.py`. It is offline and costs nothing.
+It is built from the transcript, the loudest chat, the game and the streamer, and is shown on each clip card
+under **Captions & descriptions**:
+
+| Platform | What is generated |
+|---|---|
+| YouTube Shorts | a title (max 100 chars), a description with the hook, the best quote, streamer credit + stream/VOD link and 3 hashtags, and up to 15 search tags |
+| Instagram Reels | a hook line, the quote, credit, a follow call-to-action and 8–12 hashtags at the end (max 2,200 chars) |
+| TikTok | a short casual caption, best under about 150 characters, with the quote, `(cr: streamer)`, `#fyp` and niche tags |
+
+- **Copy** puts the text on the clipboard. **Save** keeps your edit: auto-regeneration never overwrites a platform
+  you edited. **Regenerate** goes back to the automatic text.
+- Publishing uses each platform's own copy: the YouTube title + description, the Instagram caption, the TikTok
+  caption.
+- When there is no speech, the quote falls back to chat (e.g. `chat: LUL LUL LUL`).
+
+**Virality score (0–100, grade A–D)** is shown as a badge on each card, with a breakdown:
+- chat spike, up to 30 points;
+- reaction purity, 20;
+- hook, 15;
+- length sweet spot (25–45 s), 15;
+- speech for captions, 10;
+- visible face/reaction, 10.
+
+It is a transparent heuristic from the live-chat signal, not a view prediction. The same score goes into the
+Library clip's `virality_score`. The **Transcript** panel shows the Whisper transcript of the clip.
