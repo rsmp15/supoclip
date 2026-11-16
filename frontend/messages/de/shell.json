@@ -2,6 +2,7 @@
   "nav": {
     "create": "Erstellen",
     "library": "Mediathek",
+    "live": "Live",
     "social": "Social",
     "analytics": "Analysen",
     "agents": "Agenten & API",

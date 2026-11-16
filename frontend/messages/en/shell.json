@@ -2,6 +2,7 @@
   "nav": {
     "create": "Create",
     "library": "Library",
+    "live": "Live",
     "social": "Social",
     "analytics": "Analytics",
     "agents": "Agents & API",

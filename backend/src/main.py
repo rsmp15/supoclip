@@ -79,9 +79,28 @@ def create_app(
             except Exception:
                 logger.warning("Could not publish the API media volume id", exc_info=True)
 
+            live_import = None
+            from .live import manager as live_manager
+
+            if live_manager.enabled():
+                import asyncio
+
+                from .live.importer import import_loop
+
+                live_manager.start()
+                live_import = asyncio.create_task(import_loop())
             yield
         finally:
             logger.info("🛑 Shutting down SupoClip API...")
+            try:
+                from .live import manager as live_manager
+
+                if live_manager.enabled():
+                    if live_import:
+                        live_import.cancel()
+                    live_manager.shutdown()
+            except Exception:
+                logger.warning("Live clipping shutdown failed", exc_info=True)
             await close_db()
             await queue_adapter.close_pool()
             logger.info("✅ Cleanup complete")
@@ -211,6 +230,9 @@ def create_app(
     app.include_router(api_keys_router)
     app.include_router(account_router)
     app.include_router(social_router)
+    from .live.routes import router as live_router
+
+    app.include_router(live_router)
     app.include_router(email_preferences_router)
     app.include_router(feature_flags_router)
     app.include_router(mcp_oauth_internal_router)
