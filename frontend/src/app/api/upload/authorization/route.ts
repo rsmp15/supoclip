@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     {
       directUpload: true,
       uploadUrl: `${normalizedApiUrl}/upload`,
-      headers: buildBackendAuthHeaders(session.user.id),
+      headers: buildBackendAuthHeaders(userId),
     },
     {
       headers: {

@@ -25,3 +25,9 @@ docs/youtube-provider-registry*.json
 
 # Local agent checkouts
 .claude/worktrees/
+
+# one-click launcher (built locally)
+/SupoClip.exe
+/launcher.json
+/launcher/build/
+frontend/.next-prod/

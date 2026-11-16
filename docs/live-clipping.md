@@ -222,3 +222,27 @@ left out on purpose, because libass renders them in their Thin weight. THE BOLD 
 
 - **Library dialog:** the clip popup shows **Captions & descriptions** (YouTube title + description + tags, Instagram and TikTok captions). For live clips the copy is editable (Save / Regenerate); other clips get generated copy to copy. Live clips fill SupoClip's four 0–25 scores from the live virality parts (hook, reaction → engagement, length + speech → value, chat spike → shareability).
 - **Open in editor:** a live clip opens in the clip studio with its own **raw cut** (`raw.mp4` from the live clipper) as the source, so nothing is downloaded from the live stream. Its Whisper words become the editable caption track. The studio starts with a centred vertical crop; adjust it in **Framing**.
+
+## One-click start: SupoClip.exe
+
+Double-click **`SupoClip.exe`** in the repo root (build it once with `launcher\build_exe.bat`).
+
+It starts whatever isn't already running, in order, and waits until each is healthy:
+**Redis → PostgreSQL (checked) → API → worker → website**. Then it opens SupoClip in its own window and adds a **tray
+icon** next to the clock:
+- **Open SupoClip**;
+- the live status ("5/5 running");
+- **Restart services**;
+- **Update yt-dlp**;
+- **Open logs folder**;
+- **Quit**, which stops everything the launcher started.
+
+More details:
+- No console windows. Each service logs to `logs/launcher/<name>.log`.
+- Double-clicking again while it runs just opens the window.
+- Services it did not start (for example PostgreSQL) are left running on Quit.
+- Paths and ports are in `launcher.json`, created on first run next to the exe (Redis location, Python venv,
+  `node`/`pnpm`, ports).
+- **Website mode:** it uses a production build when `frontend/.next-prod` exists (`launcher\build_web.bat`), and the dev
+  server otherwise. On this PC the production build currently fails: Next.js scans the home folder and hits Windows'
+  protected "Application Data" junction. So it runs the dev server, which is slower to load the first page.
