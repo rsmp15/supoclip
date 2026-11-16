@@ -184,3 +184,36 @@ The layout is picked automatically:
 
 On 23 real stream clips, YuNet found the facecam in 21 of 21 streamer clips, where the old Haar detector found 11.
 It also recognised all 3 vertical sources.
+
+## Caption presets, fonts, colours and B-roll
+
+**Caption presets** (`style.caption_preset`; the card shows a live preview of each):
+
+| Preset | Look |
+|---|---|
+| `pop` | Inter Display Black, white, punchy words in the effect colour, 1–2 words, bounce |
+| `beast` | big Anton, white, keyword yellow, heavy outline |
+| `hormozi` | Poppins ExtraBold, 3 words, keyword green |
+| `comic` | yellow Bangers, keyword red, alternating wobble |
+| `neon` | cyan Bebas Neue, magenta glow, 1 word |
+| `clean` | TikTok Sans on a dark box, sentence case, 4 words |
+| `boxed` | black text on a yellow box |
+| `serif` | Instrument Serif italic, sentence case |
+
+**Overrides:**
+- `cap_font`: any of the 10 bundled static fonts.
+- `cap_color`, `cap_key_color`, `cap_outline`: `#RRGGBB`.
+- `cap_size`: `S` / `M` / `L`.
+
+Fonts come from `fonts/`, the edit kit, `CLIPFORGE_EXTRA_FONTS` and SupoClip's `backend/fonts`. Variable fonts are
+left out on purpose, because libass renders them in their Thin weight. THE BOLD FONT is free for personal use only.
+
+**B-roll** (`style.broll`, `style.broll_max` 1–5) is in `broll.py`:
+- When a spoken word matches the library ("money", "late", "car", "gym", "running", "golden"…), a matching stock
+  clip covers the **gameplay panel** for 2 s with a whoosh. The face/reaction stays visible.
+- It never appears during the hook, or from 6 s before the chat spike to 4 s after it, so the moment chat reacted to
+  stays on screen.
+- **Library:** `assets/broll_catalog.json` plus `stock/` (tags come from file names like `pmstock_money_*.mp4`).
+  Change it with `CLIPFORGE_BROLL_CATALOG` / `CLIPFORGE_BROLL_DIRS`. The current library is lifestyle footage;
+  gaming-specific clips (explosions, sirens, crowd cheers) would fit stream clips better.
+- The clip card lists which words triggered which clip.

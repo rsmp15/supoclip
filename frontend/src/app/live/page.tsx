@@ -34,12 +34,29 @@ type LiveClip = {
   layout?: string | null;
   detector?: string | null;
   cam_box_found?: boolean | null;
+  broll_used?: { t: number; tag: string; word: string; file: string }[] | null;
 };
 type EditStyle = {
   intro: boolean; captions: "pop" | "classic" | "off"; label: string; title_bar: boolean; bar_text: string;
   color_fx: "auto" | "red" | "green" | "none"; voiceover: boolean; vo_text: string;
+  caption_preset: string; cap_font: string; cap_color: string; cap_key_color: string; cap_outline: string;
+  cap_size: "S" | "M" | "L"; broll: boolean; broll_max: number;
 };
-const STYLE_DEFAULTS: EditStyle = { intro: true, captions: "pop", label: "auto", title_bar: true, bar_text: "", color_fx: "auto", voiceover: false, vo_text: "" };
+const STYLE_DEFAULTS: EditStyle = {
+  intro: true, captions: "pop", label: "auto", title_bar: true, bar_text: "", color_fx: "auto", voiceover: false, vo_text: "",
+  caption_preset: "pop", cap_font: "", cap_color: "", cap_key_color: "", cap_outline: "", cap_size: "M", broll: false, broll_max: 3,
+};
+const CAPTION_PRESETS: { id: string; label: string; font: string; preview: { color: string; key: string; stroke: string; box?: string } }[] = [
+  { id: "pop", label: "Pop — white, keyword in effect colour", font: "Inter", preview: { color: "#fff", key: "#ffe500", stroke: "#000" } },
+  { id: "beast", label: "Beast — big Anton, yellow keyword", font: "Anton", preview: { color: "#fff", key: "#ffe500", stroke: "#000" } },
+  { id: "hormozi", label: "Hormozi — Poppins, green keyword", font: "Poppins", preview: { color: "#fff", key: "#40ff40", stroke: "#000" } },
+  { id: "comic", label: "Comic — yellow Bangers, wobble", font: "Bangers", preview: { color: "#ffe500", key: "#ff3030", stroke: "#000" } },
+  { id: "neon", label: "Neon — cyan Bebas, magenta glow", font: "Bebas Neue", preview: { color: "#00ffff", key: "#fff", stroke: "#ff00ff" } },
+  { id: "clean", label: "Clean — TikTok Sans on a dark box", font: "TikTok Sans, Inter, sans-serif", preview: { color: "#fff", key: "#ffe500", stroke: "#000", box: "rgba(0,0,0,.6)" } },
+  { id: "boxed", label: "Boxed — black text on yellow", font: "Inter", preview: { color: "#000", key: "#ff3030", stroke: "#ffe500", box: "#ffe500" } },
+  { id: "serif", label: "Serif — Instrument Serif italic", font: "Instrument Serif", preview: { color: "#fff", key: "#ffe500", stroke: "#000" } },
+];
+const CAPTION_FONTS = ["Inter Display Black", "Anton", "Bangers", "Bebas Neue", "Archivo Black", "Poppins ExtraBold", "Barlow Condensed", "TikTok Sans", "Instrument Serif", "THE BOLD FONT"];
 type Virality = { score: number; grade: string; parts: { label: string; points: number; max: number; note: string }[] };
 type SocialCopy = {
   youtube: { title: string; description: string; tags: string[] };
@@ -411,14 +428,59 @@ function StyleEditor({ clip: c, base, onAction }: { clip: LiveClip; base: string
           </select></div>
         <div className={row}><span>Captions</span>
           <select className={sel} value={st.captions} onChange={(e) => set("captions", e.target.value as EditStyle["captions"])}>
-            <option value="pop">Pop: 1–2 words, colour keywords</option><option value="classic">Classic: 3-word karaoke</option><option value="off">Off</option>
+            <option value="pop">Styled (preset below)</option><option value="classic">Classic: 3-word karaoke</option><option value="off">Off</option>
           </select></div>
+        {st.captions === "pop" && (
+          <div className="space-y-1.5 rounded-md bg-muted/40 p-1.5">
+            {/* preview fonts for the preset chips (the render itself uses the bundled .ttf files) */}
+            <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Bangers&family=Bebas+Neue&family=Inter:wght@900&family=Instrument+Serif:ital@1&family=Poppins:wght@800&display=swap" />
+            <div className="grid grid-cols-2 gap-1">
+              {CAPTION_PRESETS.map((p) => (
+                <button key={p.id} type="button" title={p.label} onClick={() => set("caption_preset", p.id)}
+                  className={cn("rounded-md border bg-neutral-900 px-1 py-1.5 text-center", st.caption_preset === p.id && "ring-2 ring-primary")}>
+                  <span style={{ fontFamily: p.font, fontWeight: 900, color: p.preview.color, background: p.preview.box, padding: p.preview.box ? "0 4px" : 0,
+                    WebkitTextStroke: p.preview.box ? undefined : `1px ${p.preview.stroke}`, textShadow: p.id === "neon" ? "0 0 6px #ff00ff" : undefined }}>
+                    NO <span style={{ color: p.preview.key }}>WAY</span>
+                  </span>
+                  <span className="block text-[10px] text-neutral-400">{p.id}</span>
+                </button>
+              ))}
+            </div>
+            <div className={row}><span>Font</span>
+              <select className={sel} value={st.cap_font} onChange={(e) => set("cap_font", e.target.value)}>
+                <option value="">Preset font</option>{CAPTION_FONTS.map((f) => <option key={f}>{f}</option>)}
+              </select></div>
+            {st.cap_font === "THE BOLD FONT" && <p className="text-[11px] text-amber-600">THE BOLD FONT is free for personal use only.</p>}
+            <div className={row}><span>Size</span>
+              <select className={sel} value={st.cap_size} onChange={(e) => set("cap_size", e.target.value as EditStyle["cap_size"])}>
+                <option value="S">Small</option><option value="M">Medium</option><option value="L">Large</option>
+              </select></div>
+            {([["cap_color", "Text colour"], ["cap_key_color", "Keyword colour"], ["cap_outline", "Outline / box"]] as const).map(([k, label]) => (
+              <div key={k} className={row}><span>{label}</span>
+                <span className="flex items-center gap-1">
+                  <input type="color" value={st[k] || "#ffffff"} onChange={(e) => set(k, e.target.value)} className="h-6 w-8 cursor-pointer rounded border bg-transparent" />
+                  <button type="button" className="text-[11px] text-muted-foreground underline" onClick={() => set(k, "")}>{st[k] ? "preset" : "(preset)"}</button>
+                </span></div>
+            ))}
+          </div>
+        )}
         <div className={row}><span>Reaction label</span>
           <Input className="h-7 w-40 text-xs" value={st.label} placeholder="off" onChange={(e) => set("label", e.target.value)} /></div>
         <p className="text-[11px] text-muted-foreground">“auto” picks *LOCKED IN* / *DEAD* / *NO WAY* from chat; type your own or clear it to turn it off.</p>
         <label className={row}><span>Zoom-blur intro + whoosh</span><Checkbox checked={st.intro} onCheckedChange={(v) => set("intro", Boolean(v))} /></label>
         <label className={row}><span>Pinned title bar</span><Checkbox checked={st.title_bar} onCheckedChange={(v) => set("title_bar", Boolean(v))} /></label>
         {st.title_bar && <Input className="h-7 text-xs" maxLength={60} value={st.bar_text} placeholder="Title bar text (empty = the hook)" onChange={(e) => set("bar_text", e.target.value)} />}
+        <label className={row}><span>B-roll cutaways (keyword clips)</span><Checkbox checked={st.broll} onCheckedChange={(v) => set("broll", Boolean(v))} /></label>
+        {st.broll && (
+          <div className={row}><span className="text-muted-foreground">Max cutaways</span>
+            <select className={sel} value={st.broll_max} onChange={(e) => set("broll_max", +e.target.value)}>{[1, 2, 3, 4, 5].map((n) => <option key={n}>{n}</option>)}</select></div>
+        )}
+        {c.broll_used && c.broll_used.length > 0 && (
+          <p className="text-[11px] text-muted-foreground">B-roll used: {c.broll_used.map((b) => `“${b.word}” → ${b.tag} at ${b.t}s`).join(" · ")}</p>
+        )}
+        {st.broll && c.broll_used && c.broll_used.length === 0 && (
+          <p className="text-[11px] text-muted-foreground">No keyword from the library was spoken outside the hook/hype moments.</p>
+        )}
         <label className={row}><span>AI voiceover (context line)</span><Checkbox checked={st.voiceover} onCheckedChange={(v) => set("voiceover", Boolean(v))} /></label>
         {st.voiceover && <Input className="h-7 text-xs" maxLength={200} value={st.vo_text} placeholder="e.g. Speed was playing GTA 6 when this happened" onChange={(e) => set("vo_text", e.target.value)} />}
         <div className="flex gap-1.5 pb-1">

@@ -107,3 +107,11 @@ def test_style_edit_requeues_render(live_dir):
     meta = json.loads((d / "meta.json").read_text("utf-8"))
     assert meta["style"] == {"color_fx": "green", "title_bar": False} and meta["status"] == "needs_edit"
     assert view["style"] == {"color_fx": "green", "title_bar": False}
+
+
+def test_clean_style_caption_and_broll_options():
+    out = manager.clean_style({"caption_preset": "neon", "cap_font": "Anton", "cap_size": "L", "cap_color": "#ff8800",
+                               "cap_key_color": "red", "cap_outline": "", "broll": 1, "broll_max": "9"})
+    assert out == {"caption_preset": "neon", "cap_font": "Anton", "cap_size": "L", "cap_color": "#FF8800",
+                   "cap_outline": "", "broll": True, "broll_max": 5}
+    assert manager.clean_style({"caption_preset": "papyrus", "cap_font": "../../evil.ttf", "broll_max": "x"}) == {}

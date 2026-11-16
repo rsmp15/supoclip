@@ -353,6 +353,7 @@ def clip_view(d: Path) -> Dict[str, Any]:
                 transcript=m.get("transcript", ""), virality=m.get("virality"), social_copy=m.get("social_copy"),
                 style=m.get("style") or {}, style_used=m.get("style_used"), detector=m.get("detector"),
                 cam_box_found=m.get("cam_box_found"),
+                broll_used=m.get("broll_used"),
                 social_copy_edited=m.get("social_copy_edited", []))
 
 
@@ -360,6 +361,12 @@ STYLE_CHOICES: Dict[str, Any] = {
     "intro": bool, "title_bar": bool, "voiceover": bool,
     "captions": ("pop", "classic", "off"), "color_fx": ("auto", "red", "green", "none"),
     "label": str, "bar_text": str, "vo_text": str,
+    "caption_preset": ("pop", "beast", "hormozi", "comic", "neon", "clean", "boxed", "serif"),
+    "cap_font": ("", "Inter Display Black", "Anton", "Bangers", "Bebas Neue", "Archivo Black", "Poppins ExtraBold",
+                 "Barlow Condensed", "TikTok Sans", "Instrument Serif", "THE BOLD FONT"),
+    "cap_size": ("S", "M", "L"),
+    "cap_color": "hex", "cap_key_color": "hex", "cap_outline": "hex",
+    "broll": bool, "broll_max": "count",
 }
 
 
@@ -372,6 +379,15 @@ def clean_style(style: Dict[str, Any]) -> Dict[str, Any]:
         value = style[key]
         if rule is bool:
             out[key] = bool(value)
+        elif rule == "hex":
+            text = str(value or "").strip()
+            if text == "" or re.fullmatch(r"#[0-9a-fA-F]{6}", text):
+                out[key] = text.upper()
+        elif rule == "count":
+            try:
+                out[key] = max(0, min(5, int(value)))
+            except (TypeError, ValueError):
+                pass
         elif rule is str:
             out[key] = str(value or "").strip()[:60 if key != "vo_text" else 200]
         elif value in rule:

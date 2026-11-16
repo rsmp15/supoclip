@@ -458,12 +458,113 @@ STYLE_DEFAULTS = dict(intro=True,            # zoom-blur intro + whoosh (first 0
                       bar_text="",           # "" = from the hook
                       color_fx="auto",       # auto (shock=red, hype=green, laugh=none) / red / green / none
                       voiceover=False,       # context line read by a TTS voice in the first seconds
-                      vo_text="")            # "" = "<streamer> was playing <game> when this happened"
+                      vo_text="",            # "" = "<streamer> was playing <game> when this happened"
+                      caption_preset="pop",  # see CAPTION_PRESETS (fonts, colours, animation)
+                      cap_font="",           # override the preset font (a key of FONTS)
+                      cap_color="",          # override text colour "#RRGGBB"
+                      cap_key_color="",      # override keyword colour "#RRGGBB"
+                      cap_outline="",        # override outline/box colour "#RRGGBB"
+                      cap_size="M",          # S / M / L
+                      broll=False,           # keyword B-roll cutaways over the gameplay panel
+                      broll_max=3)
 FX_COLORS = {"red": ("&H003030FF&", "red"), "green": ("&H0040FF40&", "0x22DD44"), "none": ("&H0000E5FF&", "white")}
 LABELS = {"laugh": ["*DEAD*", "*CRYING*", "*CAN'T BREATHE*"], "shock": ["*NO WAY*", "*JAW DROP*", "*SHOCKED*"],
           "hype": ["*LOCKED IN*", "*GOATED*", "*W*"]}
 KEY_RE = re.compile(r"^(no+|nah+|what+|wait|bro+|oh+|yo+|w|win|dead|crazy|insane|play|run|go+|stop|help|why|how|omg|"
                     r"wow|yes+|goat|clutch|kill(ed)?|died|die|bruh|lets|let's|ayo+|huh|never|sick|holy)[.!?,]*$", re.I)
+
+
+# Caption fonts: static files only (variable fonts render as their Thin weight in libass).
+FONTS = {  # key: (file, family, bold, italic)
+    "Inter Display Black": ("InterDisplay-Black.ttf", "Inter Display Black", 0, 0),
+    "Anton": ("Anton-Regular.ttf", "Anton", 0, 0),
+    "Bangers": ("Bangers-Regular.ttf", "Bangers", 0, 0),
+    "Bebas Neue": ("BebasNeue-Regular.ttf", "Bebas Neue", 0, 0),
+    "Archivo Black": ("ArchivoBlack-Regular.ttf", "Archivo Black", 0, 0),
+    "Poppins ExtraBold": ("Poppins-ExtraBold.ttf", "Poppins", 0, 0),
+    "Barlow Condensed": ("BarlowCondensed-Bold.ttf", "Barlow Condensed", 0, 0),
+    "TikTok Sans": ("TikTokSans-Bold.ttf", "TikTok Sans", 0, 0),
+    "Instrument Serif": ("InstrumentSerif-Italic.ttf", "Instrument Serif", 0, 1),
+    "THE BOLD FONT": ("THEBOLDFONT.ttf", "THE BOLD FONT", 0, 0),          # free for personal use only
+}
+FONT_DIRS = [Path(os.environ["CLIPFORGE_EXTRA_FONTS"]) if os.environ.get("CLIPFORGE_EXTRA_FONTS") else None,
+             Path(cf.FONT_DIR), KIT / "03 Fonts & Captions" / "Fonts",
+             Path(__file__).resolve().parent.parent.parent / "fonts",       # SupoClip backend/fonts
+             cf.WS / "supoclip" / "backend" / "fonts"]                         # clipforge next to supoclip
+
+# name: font, size, text, keyword, outline (ASS &HBBGGRR), outline width, shadow, box, words per line, upper, anim
+CAPTION_PRESETS = {
+    "pop":     dict(font="Inter Display Black", size=104, text="&H00FFFFFF", key="accent", outline="&H00000000", ow=9, sh=3, box=False, n=2, upper=True, anim="bounce"),
+    "beast":   dict(font="Anton", size=128, text="&H00FFFFFF", key="&H0000E5FF", outline="&H00000000", ow=11, sh=5, box=False, n=2, upper=True, anim="bounce"),
+    "hormozi": dict(font="Poppins ExtraBold", size=92, text="&H00FFFFFF", key="&H0040FF40", outline="&H00000000", ow=8, sh=2, box=False, n=3, upper=True, anim="bounce"),
+    "comic":   dict(font="Bangers", size=120, text="&H0000E5FF", key="&H003030FF", outline="&H00000000", ow=9, sh=4, box=False, n=2, upper=True, anim="wobble"),
+    "neon":    dict(font="Bebas Neue", size=138, text="&H00FFFF00", key="&H00FFFFFF", outline="&H00FF00FF", ow=5, sh=0, box=False, n=1, upper=True, anim="glow"),
+    "clean":   dict(font="TikTok Sans", size=80, text="&H00FFFFFF", key="&H0000E5FF", outline="&H96000000", ow=14, sh=0, box=True, n=4, upper=False, anim="fade"),
+    "boxed":   dict(font="Inter Display Black", size=88, text="&H00000000", key="&H003030FF", outline="&H0000E5FF", ow=14, sh=0, box=True, n=3, upper=True, anim="bounce"),
+    "serif":   dict(font="Instrument Serif", size=112, text="&H00FFFFFF", key="&H0000E5FF", outline="&H00000000", ow=4, sh=2, box=False, n=3, upper=False, anim="fade"),
+}
+SIZE_SCALE = {"S": 0.85, "M": 1.0, "L": 1.18}
+
+
+def find_font(file):
+    for d in FONT_DIRS:
+        if d and (Path(d) / file).exists():
+            return Path(d) / file
+    return None
+
+
+def hex_to_ass(h, default):
+    m = re.fullmatch(r"#?([0-9a-fA-F]{6})", (h or "").strip())
+    return f"&H00{m.group(1)[4:6]}{m.group(1)[2:4]}{m.group(1)[0:2]}".upper().replace("&H00", "&H00", 1) if m else default
+
+
+def caption_setup(st, accent):
+    """-> (preset dict with resolved font/colours, ASS style line for 'Cap2', font file to ship)."""
+    pr = dict(CAPTION_PRESETS.get(st.get("caption_preset") or "pop", CAPTION_PRESETS["pop"]))
+    font_key = st.get("cap_font") if st.get("cap_font") in FONTS else pr["font"]
+    file, family, bold, italic = FONTS[font_key]
+    path = find_font(file)
+    if path is None:                                   # font not on this machine: fall back to the house font
+        file, family, bold, italic = FONTS["Inter Display Black"]; path = find_font(file)
+    text = hex_to_ass(st.get("cap_color"), pr["text"])
+    key = hex_to_ass(st.get("cap_key_color"), accent if pr["key"] == "accent" else pr["key"])
+    outline = hex_to_ass(st.get("cap_outline"), pr["outline"])
+    size = int(pr["size"] * SIZE_SCALE.get(st.get("cap_size") or "M", 1.0))
+    border = 3 if pr["box"] else 1
+    back = outline if pr["box"] else "&H96000000"
+    pr.update(text=text, key=key, outline=outline, size=size, family=family)
+    style = (f"Style: Cap2,{family},{size},{text},&H000000FF,{outline},{back},{-1 if bold else 0},{-1 if italic else 0},"
+             f"0,0,100,100,0,0,{border},{pr['ow']},{pr['sh']},2,90,90,{{cap_v}},1")
+    return pr, style, path
+
+
+def ass_styled(words, t1, pr):
+    """Captions in a preset: chunks of pr['n'] words, keyword colour, animation per preset."""
+    chunks, cur = [], []
+    for w in words:
+        long_word = len(w["w"]) >= 9 and pr["n"] <= 2
+        if cur and (len(cur) >= pr["n"] or w["s"] - cur[-1]["e"] > 0.4 or long_word):
+            chunks.append(cur); cur = []
+        cur.append(w)
+    if cur:
+        chunks.append(cur)
+    anim = {"bounce": "\\fscx70\\fscy70\\t(0,90,\\fscx114\\fscy114)\\t(90,170,\\fscx100\\fscy100)",
+            "wobble": "\\fscx70\\fscy70\\frz{rot}\\t(0,100,\\fscx112\\fscy112)\\t(100,180,\\fscx100\\fscy100)",
+            "glow": "\\blur8\\fad(80,60)",
+            "fade": "\\fad(90,60)"}[pr["anim"]]
+    ev = []
+    for i, ch in enumerate(chunks):
+        s0 = ch[0]["s"]
+        e0 = min(chunks[i + 1][0]["s"] if i + 1 < len(chunks) else 1e9, ch[-1]["e"] + 0.3, t1)
+        if e0 - s0 < 0.08:
+            continue
+        def word(x):
+            t = strip_emoji(x["w"]).strip()
+            t = t.upper() if pr["upper"] else t
+            return f"{{\\c{pr['key']}}}{t}{{\\c{pr['text']}}}" if KEY_RE.match(x["w"].strip()) else t
+        txt = " ".join(word(x) for x in ch)
+        ev.append(f"Dialogue: 0,{cf._ts(s0)},{cf._ts(e0)},Cap2,Cap2,0,0,0,,{{{anim.replace('{rot}', '-3' if i % 2 else '3')}}}{txt}")
+    return ev
 
 
 def clip_style(meta):
@@ -570,16 +671,18 @@ def produce(raw, job, model="base"):
     st = clip_style(meta)
     meta["style_used"] = st
     accent, fx_rgb = FX_COLORS.get(st["color_fx"], FX_COLORS["none"])
+    cap_preset, cap_style_line, cap_font_file = caption_setup(st, accent)
     F = cf.FONT_NAME
     ass = cf.ass_header("Cap", 82, pos["cap_v"]).replace(
         "\n\n[Events]",
         f"\nStyle: Hook,{F},74,&H00000000,&H000000FF,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,16,0,8,136,160,"
         f"{pos['hook_v']},1\nStyle: Chat,{F},48,&H00FFFFFF,&H000000FF,&HC8000000,&HC8000000,-1,0,0,0,100,100,0,0,3,10,0,7,0,0,0,1"
         f"\nStyle: Pop,{F},104,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,9,3,2,90,90,{pos['cap_v']},1"
+        f"\n{cap_style_line.replace('{cap_v}', str(pos['cap_v']))}"
         f"\nStyle: Label,{F},92,{accent},&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,2,0,1,10,4,5,0,0,0,1"
         f"\nStyle: Bar,{F},54,&H00FFFFFF,&H000000FF,&HB4000000,&HB4000000,-1,0,0,0,100,100,0,0,3,14,0,8,90,90,{pos.get('bar_v', 140)},1"
         "\n\n[Events]", 1)
-    ev = (ass_pop(words, dur, accent) if st["captions"] == "pop" else
+    ev = (ass_styled(words, dur, cap_preset) if st["captions"] == "pop" else
           cf.ass_words(words, 0, dur) if st["captions"] == "classic" else [])
     ev.append(f"Dialogue: 3,{cf._ts(0)},{cf._ts(3.2)},Hook,Hook,0,0,0,,{{\\fad(0,250)\\fscx90\\fscy90\\t(0,150,\\fscx100\\fscy100)}}{wrap_hook(title)}")
     if st["title_bar"]:                               # pinned title: from the start where it can't clash with the hook
@@ -637,6 +740,15 @@ def produce(raw, job, model="base"):
     else:
         whoosh, hit = cf.make_sfx(job / "sfx")
         add(whoosh, h0 - 0.25, 0.5); add(hit, h0, 0.6)
+    cues = []
+    if st["broll"]:
+        import broll
+        cues = broll.plan(words, dur, hype_t, max_cues=int(st.get("broll_max") or 3))
+        for c in cues:
+            add(KIT_SFX["whoosh"] if KIT.exists() else None, max(c["t"] - 0.15, 0), 0.35)
+        meta["broll_used"] = [dict(t=c["t"], tag=c["tag"], word=c["word"], file=Path(c["path"]).name) for c in cues]
+    else:
+        meta.pop("broll_used", None)
     vo_dur = 0.0
     if st["voiceover"]:
         import voice
@@ -667,14 +779,25 @@ def produce(raw, job, model="base"):
                 px[x, y] = (0, 0, 0, a)
         gim.save(grad)
     n_in = 1 + len(inputs)
-    try:
-        fonts = os.path.relpath(cf.FONT_DIR, job).replace("\\", "/")
-    except ValueError:                                # clip folder on another drive: bring the fonts along
-        (job / "fonts").mkdir(exist_ok=True)
-        for f in Path(cf.FONT_DIR).glob("*.[ot]tf"):
+    (job / "fonts").mkdir(exist_ok=True)                 # job-local fonts: house font + the caption font
+    for f in list(Path(cf.FONT_DIR).glob("*.[ot]tf")) + ([cap_font_file] if cap_font_file else []):
+        if not (job / "fonts" / f.name).exists():
             shutil.copy2(f, job / "fonts" / f.name)
-        fonts = "fonts"
-    vf = f"{g};[lay]{zoom}[zm];[zm][{n_in}:v]overlay=0:0[gr];"
+    fonts = "fonts"
+    b_in = n_in + (2 if flash.exists() else 1)          # B-roll inputs come after the gradient (+ flash)
+    vf = f"{g};[lay]{zoom}[zm];"
+    cur = "zm"
+    if cues:
+        import broll
+        px, py, pw, ph = broll.panel(layout)
+        for k, c in enumerate(cues):
+            t0c, dc = c["t"], c["dur"]
+            vf += (f"[{b_in + k}:v]trim=0:{dc:.2f},setpts=PTS-STARTPTS+{t0c:.2f}/TB,fps=30,"
+                   f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},setsar=1,format=yuva420p,"
+                   f"fade=t=in:st={t0c:.2f}:d=0.15:alpha=1,fade=t=out:st={t0c + dc - 0.18:.2f}:d=0.18:alpha=1[br{k}];"
+                   f"[{cur}][br{k}]overlay={px}:{py}:eof_action=pass:enable='between(t,{t0c:.2f},{t0c + dc:.2f})'[bo{k}];")
+            cur = f"bo{k}"
+    vf += f"[{cur}][{n_in}:v]overlay=0:0[gr];"
     if flash.exists():
         vf += (f"[{n_in + 1}:v]fps=30,scale=1080:1920,format=gbrp,tpad=start_duration={h0:.2f}:stop_duration={dur:.2f}:color=black,"
                f"trim=0:{dur:.2f},setpts=PTS-STARTPTS[fl];[gr]format=gbrp[gb];[gb][fl]blend=all_mode=screen:shortest=1,format=yuv420p[fx];")
@@ -706,6 +829,8 @@ def produce(raw, job, model="base"):
     for p in inputs:
         cmd += ["-i", p]
     cmd += ["-loop", "1", "-t", dur, "-i", grad] + (["-i", flash] if flash.exists() else [])
+    for c in cues:
+        cmd += ["-t", f"{c['dur'] + 0.5:.2f}", "-i", c["path"]]
     cf.sh(cmd + ["-filter_complex", f"{vf};{af}", "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium",
                  "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
                  "-movflags", "+faststart", "-t", dur, "final.mp4"], cwd=job)
