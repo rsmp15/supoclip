@@ -351,7 +351,32 @@ def clip_view(d: Path) -> Dict[str, Any]:
                 description=m.get("description", ""), published=m.get("published", {}), source_url=m.get("source_url"),
                 render_error=m.get("render_error"), supoclip=m.get("supoclip"),
                 transcript=m.get("transcript", ""), virality=m.get("virality"), social_copy=m.get("social_copy"),
+                style=m.get("style") or {}, style_used=m.get("style_used"), detector=m.get("detector"),
+                cam_box_found=m.get("cam_box_found"),
                 social_copy_edited=m.get("social_copy_edited", []))
+
+
+STYLE_CHOICES: Dict[str, Any] = {
+    "intro": bool, "title_bar": bool, "voiceover": bool,
+    "captions": ("pop", "classic", "off"), "color_fx": ("auto", "red", "green", "none"),
+    "label": str, "bar_text": str, "vo_text": str,
+}
+
+
+def clean_style(style: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only known edit-style keys with valid values (the engine reads meta["style"])."""
+    out: Dict[str, Any] = {}
+    for key, rule in STYLE_CHOICES.items():
+        if key not in style:
+            continue
+        value = style[key]
+        if rule is bool:
+            out[key] = bool(value)
+        elif rule is str:
+            out[key] = str(value or "").strip()[:60 if key != "vo_text" else 200]
+        elif value in rule:
+            out[key] = value
+    return out
 
 
 def update_clip(rel: str, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -380,6 +405,10 @@ def update_clip(rel: str, body: Dict[str, Any]) -> Dict[str, Any]:
                     clean = {k: v for k, v in fields.items() if k in ("title", "description", "caption", "tags")}
                     cur[platform] = {**cur.get(platform, {}), **clean}; edited.add(platform)
             m["social_copy"], m["social_copy_edited"] = cur, sorted(edited)
+        style = body.get("style")
+        if isinstance(style, dict):                      # editor: effects / captions / title bar / voiceover
+            m["style"] = {**(m.get("style") or {}), **clean_style(style)}
+            rerender = True
         regen = body.get("regenerate_copy")
         if regen:                                        # drop edits -> the generator rewrites that platform
             m["social_copy_edited"] = [] if regen == "all" else [p for p in m.get("social_copy_edited", []) if p != regen]

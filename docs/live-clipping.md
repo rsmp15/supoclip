@@ -156,3 +156,31 @@ under **Captions & descriptions**:
 
 It is a transparent heuristic from the live-chat signal, not a view prediction. The same score goes into the
 Library clip's `virality_score`. The **Transcript** panel shows the Whisper transcript of the clip.
+
+## Edit style: effects, captions, title bar, voiceover, reframing
+
+Each clip has style options in `meta.json` under `"style"`. In SupoClip, set them on the clip card under
+**Live → Review clips → Edit style**, then press **Apply & re-render**.
+
+| Option | Values | What it does |
+|---|---|---|
+| `color_fx` | `auto` (shock = red, hype = green, laugh = none), `red`, `green`, `none` | A colour grade + vignette on the hype moment, a colour hit at the spike, and a colour end flash |
+| `captions` | `pop` (default), `classic`, `off` | `pop`: 1–2 words at a time, bouncing in; punchy words (NO, WHAT, BRO, WAIT, W…) take the effect colour. `classic`: 3-word karaoke. |
+| `label` | `auto`, any text, or empty for off | A reaction label on the hype moment: *LOCKED IN* / *DEAD* / *NO WAY*, picked from the chat mood |
+| `intro` | true / false | A zoom-blur punch-in for the first 0.35 s, with a whoosh |
+| `title_bar` + `bar_text` | true / false, text | A title pinned on screen for the whole clip. Empty text uses a short title or "streamer • game". |
+| `voiceover` + `vo_text` | true / false, text | A context line read by a voice in the first seconds ("Speed was playing GTA 6 when this happened"); stream audio is lowered under it. The voice is Kokoro if installed, else edge-tts if installed, else the offline Windows voice. |
+
+**Reframing (horizontal → vertical)** is in `reframe.py`:
+- **Faces:** the YuNet DNN detector (`models/face_detection_yunet_2023mar.onnx`, the same model SupoClip uses).
+  Without the model, it falls back to Haar frontal + alt2 + profile cascades.
+- **People without a visible face:** HOG body detection.
+
+The layout is picked automatically:
+- **facecam**: a face that stays in the same spot. The crop snaps to the webcam rectangle's borders when they are found.
+- **face**: a person filling the frame. A smoothed crop follows them.
+- **vertical**: portrait sources are fitted with a blurred fill.
+- **gameplay**: nobody on screen.
+
+On 23 real stream clips, YuNet found the facecam in 21 of 21 streamer clips, where the old Haar detector found 11.
+It also recognised all 3 vertical sources.

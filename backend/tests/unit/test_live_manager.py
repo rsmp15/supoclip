@@ -91,3 +91,19 @@ def test_start_session_validates_input(live_dir):
 def test_mmss():
     assert importer._mmss(75) == "01:15"
     assert importer._mmss(3725) == "01:02:05"
+
+
+def test_clean_style_whitelists_values():
+    out = manager.clean_style({"color_fx": "red", "captions": "pop", "intro": 0, "label": " *LOCKED IN* ",
+                               "voiceover": "yes", "vo_text": "x" * 500, "evil": "rm -rf", "color_fx_bad": 1})
+    assert out == {"color_fx": "red", "captions": "pop", "intro": False, "label": "*LOCKED IN*",
+                   "voiceover": True, "vo_text": "x" * 200}
+    assert manager.clean_style({"color_fx": "purple", "captions": "huge"}) == {}
+
+
+def test_style_edit_requeues_render(live_dir):
+    d = _clip(live_dir)
+    view = manager.update_clip("2026-11-16/chan_01", {"style": {"color_fx": "green", "title_bar": False}})
+    meta = json.loads((d / "meta.json").read_text("utf-8"))
+    assert meta["style"] == {"color_fx": "green", "title_bar": False} and meta["status"] == "needs_edit"
+    assert view["style"] == {"color_fx": "green", "title_bar": False}

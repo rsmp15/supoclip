@@ -347,6 +347,22 @@ def best_hook(kind):
 
 
 def detect_layout(video):
+    """(layout, face) - see reframe.py. detect_info() returns the full result (webcam box, follow track)."""
+    info = detect_info(video)
+    return info["layout"], info.get("face")
+
+
+def detect_info(video):
+    try:
+        import reframe
+        return reframe.detect(video)
+    except Exception as e:                           # never lose a clip to the detector: old Haar path
+        log("  reframe failed, using basic face detection:", str(e)[:120])
+        layout, face = _detect_layout_basic(video)
+        return dict(layout=layout, face=face, cam_box=None, track=None, detector="haar-basic")
+
+
+def _detect_layout_basic(video):
     """'facecam' (small webcam in gameplay), 'face' (full-frame person/IRL) or 'gameplay'."""
     import cv2
     cap = cv2.VideoCapture(str(video))
@@ -380,9 +396,23 @@ def detect_layout(video):
     return ("facecam" if fw < 0.16 else "face"), (cx, cy, fw)
 
 
-def layout_filter(layout, face, dur, hype_t):
+def layout_filter(layout, face, dur, hype_t, info=None, job=None):
     """Filter graph from [0:v] (normalised 1920x1080) to [lay] 1080x1920 + caption/chat placement."""
+    info = info or {}
     pre = "[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30"
+    if layout == "vertical":                          # already portrait: fit + blurred fill
+        g = ("[0:v]setsar=1,fps=30,split[s1][s2];[s1]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+             "boxblur=28,eq=brightness=-0.2[bg];[s2]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+             "[bg][fg]overlay=(W-w)/2:(H-h)/2[lay]")
+        return g, dict(cap_v=420, hook_v=230, chat_y=1050, bar_v=140)
+    if layout == "facecam" and info.get("cam_box"):   # the webcam's own borders were found: crop exactly that
+        bx, by, bw, bh = info["cam_box"]
+        gw = 1080 * 1080 / 1280
+        g = (f"{pre},split[s1][s2];[s1]crop={bw * 1920:.0f}:{bh * 1080:.0f}:{bx * 1920:.0f}:{by * 1080:.0f},"
+             f"scale=1080:640:force_original_aspect_ratio=increase,crop=1080:640[cam];"
+             f"[s2]crop={gw:.0f}:1080:(1920-{gw:.0f})/2:0,scale=1080:1280[game];[cam][game]vstack[lay0];"
+             f"[lay0]drawbox=x=0:y=636:w=1080:h=8:color=black:t=fill[lay]")
+        return g, dict(cap_v=1920 - 640 - 230, hook_v=70, chat_y=1380, focus_y=320, bar_v=660)
     if layout == "facecam":
         cx, cy, fw = face
         cw = min(1920, max(360, fw * 1920 * 3.4)); ch = cw * 640 / 1080
@@ -391,15 +421,21 @@ def layout_filter(layout, face, dur, hype_t):
         g = (f"{pre},split[s1][s2];[s1]crop={cw:.0f}:{ch:.0f}:{x:.0f}:{y:.0f},scale=1080:640[cam];"
              f"[s2]crop={gw:.0f}:1080:(1920-{gw:.0f})/2:0,scale=1080:1280[game];[cam][game]vstack[lay0];"
              f"[lay0]drawbox=x=0:y=636:w=1080:h=8:color=black:t=fill[lay]")
-        return g, dict(cap_v=1920 - 640 - 230, hook_v=70, chat_y=1380, focus_y=320)
+        return g, dict(cap_v=1920 - 640 - 230, hook_v=70, chat_y=1380, focus_y=320, bar_v=660)
     if layout == "face":
-        cx = face[0]; cw = 1080 * 1080 / 1920
+        cw = 1080 * 1080 / 1920
+        if info.get("track") and job is not None:     # follow the person: crop x moves along the smoothed track
+            import reframe
+            x0 = reframe.sendcmd_crop(info["track"], cw, 1920, Path(job) / "follow.cmd")
+            return (f"{pre},sendcmd=f=follow.cmd,crop@follow=w={cw:.0f}:h=1080:x={x0}:y=0,scale=1080:1920[lay]",
+                    dict(cap_v=520, hook_v=230, chat_y=1050, bar_v=140))
+        cx = face[0]
         x = min(max(cx * 1920 - cw / 2, 0), 1920 - cw)
-        return f"{pre},crop={cw:.0f}:1080:{x:.0f}:0,scale=1080:1920[lay]", dict(cap_v=520, hook_v=230, chat_y=1050)
+        return f"{pre},crop={cw:.0f}:1080:{x:.0f}:0,scale=1080:1920[lay]", dict(cap_v=520, hook_v=230, chat_y=1050, bar_v=140)
     # gameplay: blurred fill + zoomed 16:9 band
     g = (f"{pre},split[s1][s2];[s1]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=28,"
          f"eq=brightness=-0.22[bg];[s2]scale=1780:-2,crop=1080:1000[fg];[bg][fg]overlay=0:460[lay]")
-    return g, dict(cap_v=360, hook_v=250, chat_y=1100)
+    return g, dict(cap_v=360, hook_v=250, chat_y=1100, bar_v=250)
 
 
 def chat_events(msgs, t_start, y0):
@@ -413,6 +449,59 @@ def chat_events(msgs, t_start, y0):
 
 
 YT_SKILLS = Path.home() / ".yt-agent" / "youtube-agent-skill" / "skills"
+
+# ---------------------------------------------------------------- edit style (per clip: meta["style"])
+STYLE_DEFAULTS = dict(intro=True,            # zoom-blur intro + whoosh (first 0.35 s)
+                      captions="pop",        # pop = 1-2 words with colour keywords, classic = 3-word karaoke, off
+                      label="auto",          # reaction label on the hype moment: auto / custom text / "" (off)
+                      title_bar=True,        # title pinned on screen the whole clip
+                      bar_text="",           # "" = from the hook
+                      color_fx="auto",       # auto (shock=red, hype=green, laugh=none) / red / green / none
+                      voiceover=False,       # context line read by a TTS voice in the first seconds
+                      vo_text="")            # "" = "<streamer> was playing <game> when this happened"
+FX_COLORS = {"red": ("&H003030FF&", "red"), "green": ("&H0040FF40&", "0x22DD44"), "none": ("&H0000E5FF&", "white")}
+LABELS = {"laugh": ["*DEAD*", "*CRYING*", "*CAN'T BREATHE*"], "shock": ["*NO WAY*", "*JAW DROP*", "*SHOCKED*"],
+          "hype": ["*LOCKED IN*", "*GOATED*", "*W*"]}
+KEY_RE = re.compile(r"^(no+|nah+|what+|wait|bro+|oh+|yo+|w|win|dead|crazy|insane|play|run|go+|stop|help|why|how|omg|"
+                    r"wow|yes+|goat|clutch|kill(ed)?|died|die|bruh|lets|let's|ayo+|huh|never|sick|holy)[.!?,]*$", re.I)
+
+
+def clip_style(meta):
+    st = dict(STYLE_DEFAULTS)
+    st.update({k: v for k, v in (meta.get("style") or {}).items() if k in STYLE_DEFAULTS})
+    if st["color_fx"] == "auto":
+        st["color_fx"] = {"shock": "red", "hype": "green"}.get(meta.get("hype_kind"), "none")
+    return st
+
+
+def ass_pop(words, t1, accent):
+    """1-2 word pop captions; punchy keywords take the accent colour."""
+    chunks, cur = [], []
+    for w in words:
+        long_word = len(w["w"]) >= 8
+        if cur and (len(cur) >= 2 or w["s"] - cur[-1]["e"] > 0.35 or long_word or len(cur[0]["w"]) >= 8):
+            chunks.append(cur); cur = []
+        cur.append(w)
+    if cur:
+        chunks.append(cur)
+    ev = []
+    for i, ch in enumerate(chunks):
+        s0 = ch[0]["s"]
+        e0 = min(chunks[i + 1][0]["s"] if i + 1 < len(chunks) else 1e9, ch[-1]["e"] + 0.3, t1)
+        if e0 - s0 < 0.08:
+            continue
+        txt = " ".join((f"{{\\c{accent}}}{strip_emoji(x['w']).upper()}{{\\c&HFFFFFF&}}" if KEY_RE.match(x["w"].strip())
+                        else strip_emoji(x["w"]).upper()) for x in ch)
+        ev.append(f"Dialogue: 0,{cf._ts(s0)},{cf._ts(e0)},Pop,Pop,0,0,0,,"
+                  f"{{\\fscx70\\fscy70\\t(0,90,\\fscx114\\fscy114)\\t(90,170,\\fscx100\\fscy100)}}{txt}")
+    return ev
+
+
+def short_title(text, n=34):
+    t = strip_emoji(text).strip()
+    if len(t) <= n:
+        return t
+    return t[:n].rsplit(" ", 1)[0] + "…"
 
 
 def _tool_json(script, *args, stdin_lines=None):
@@ -434,8 +523,9 @@ def package(meta):
             "shock": ["Nobody Saw This Coming in GTA 6", "Chat Said NO WAY After This GTA 6 Moment"],
             "hype": ["This GTA 6 Moment Broke Chat", "GTA 6 Gameplay Moment Chat Went Crazy For"]}.get(
         kind, ["Chat Went Crazy Over This GTA 6 Moment", "GTA 6 Live: The Moment Chat Exploded"])
-    cands = base + ([f"{who} Reacts to This GTA 6 Moment"] if who else []) + [" ".join(w.capitalize() for w in hook.lower().split())]
     label = meta.get("game_label") or "GTA 6"
+    reacts = [f"{who} Reacts to This GTA 6 Moment"] if who and label.strip("_ ").lower() != who.strip("_ ").lower() else []
+    cands = base + reacts + [" ".join(w.capitalize() for w in hook.lower().split())]
     cands = [c.replace("GTA 6", label) for c in dict.fromkeys(cands) if c][:6]
     thumb = " ".join(hook.split()[:3])
     best, scored = cands[0], None
@@ -460,26 +550,58 @@ def produce(raw, job, model="base"):
     job = Path(job).resolve(); meta = json.loads((job / "meta.json").read_text("utf-8"))
     pr = cf.probe(raw); dur = pr["dur"]
     hype_t = min(meta.get("hype_offset", LOOKBACK), dur - 1)
-    layout, face = detect_layout(raw)
-    meta["layout"] = layout
-    g, pos = layout_filter(layout, face, dur, hype_t)
+    info = detect_info(raw)
+    layout, face = info["layout"], info.get("face")
+    meta["layout"], meta["detector"] = layout, info.get("detector")
+    meta["cam_box_found"] = bool(info.get("cam_box"))
+    g, pos = layout_filter(layout, face, dur, hype_t, info, job)
     words = []
     try:
         words = cf.transcribe(raw, model)["words"]
     except Exception as e:
         log("  captions skipped:", str(e)[:120])
     meta["transcript"] = " ".join(w["w"] for w in words)
+    cf._hf = None; cf._model = None                   # free Whisper (~1 GB) before the encode: avoids out-of-memory
+    import gc; gc.collect()
     meta["hype_kind"] = meta.get("hype_kind") or hype_kind(meta.get("top_chat", []))
     if not meta.get("hook"):
         meta["hook"] = best_hook(meta["hype_kind"]).replace("GTA 6", (meta.get("game_label") or "GTA 6").upper())
     title = strip_emoji(meta["hook"]).upper()
+    st = clip_style(meta)
+    meta["style_used"] = st
+    accent, fx_rgb = FX_COLORS.get(st["color_fx"], FX_COLORS["none"])
     F = cf.FONT_NAME
     ass = cf.ass_header("Cap", 82, pos["cap_v"]).replace(
         "\n\n[Events]",
         f"\nStyle: Hook,{F},74,&H00000000,&H000000FF,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,16,0,8,136,160,"
-        f"{pos['hook_v']},1\nStyle: Chat,{F},48,&H00FFFFFF,&H000000FF,&HC8000000,&HC8000000,-1,0,0,0,100,100,0,0,3,10,0,7,0,0,0,1\n\n[Events]", 1)
-    ev = cf.ass_words(words, 0, dur)
+        f"{pos['hook_v']},1\nStyle: Chat,{F},48,&H00FFFFFF,&H000000FF,&HC8000000,&HC8000000,-1,0,0,0,100,100,0,0,3,10,0,7,0,0,0,1"
+        f"\nStyle: Pop,{F},104,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,9,3,2,90,90,{pos['cap_v']},1"
+        f"\nStyle: Label,{F},92,{accent},&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,2,0,1,10,4,5,0,0,0,1"
+        f"\nStyle: Bar,{F},54,&H00FFFFFF,&H000000FF,&HB4000000,&HB4000000,-1,0,0,0,100,100,0,0,3,14,0,8,90,90,{pos.get('bar_v', 140)},1"
+        "\n\n[Events]", 1)
+    ev = (ass_pop(words, dur, accent) if st["captions"] == "pop" else
+          cf.ass_words(words, 0, dur) if st["captions"] == "classic" else [])
     ev.append(f"Dialogue: 3,{cf._ts(0)},{cf._ts(3.2)},Hook,Hook,0,0,0,,{{\\fad(0,250)\\fscx90\\fscy90\\t(0,150,\\fscx100\\fscy100)}}{wrap_hook(title)}")
+    if st["title_bar"]:                               # pinned title: from the start where it can't clash with the hook
+        bar = st["bar_text"] or next((t for t in (meta.get("yt_title"), meta["hook"].title()) if t and len(t) <= 36), None)
+        if not bar:
+            who_b = (meta.get("channel") or "LIVE").strip("_ ")
+            game_b = meta.get("game_label") or ""
+            generic_b = {"", "just chatting", "games + demos", "irl", "variety", "live", "gaming"}
+            bar = (f"{who_b} • {game_b}" if game_b.lower() not in generic_b and game_b.lower() != who_b.lower()
+                   else f"{who_b} LIVE")
+        bar = short_title(bar, 38)
+        bar_t0 = 0.0 if pos.get("bar_v", 140) > pos["hook_v"] + 260 else 3.2
+        ev.append(f"Dialogue: 2,{cf._ts(bar_t0)},{cf._ts(dur)},Bar,Bar,0,0,0,,{{\\fad(200,0)}}{bar}")
+    label = st["label"]
+    if label == "auto":
+        opts = LABELS.get(meta.get("hype_kind"), LABELS["hype"])
+        label = opts[int(float(meta.get("ratio") or 0) * 10) % len(opts)]
+    if label:
+        ly = 1150 if layout == "facecam" else 760     # facecam: in the gameplay panel, between captions and chat
+        ev.append(f"Dialogue: 4,{cf._ts(hype_t)},{cf._ts(min(dur, hype_t + 1.8))},Label,Label,0,0,0,,"
+                  f"{{\\pos(540,{ly})\\frz-4\\fscx40\\fscy40\\t(0,120,\\fscx118\\fscy118)\\t(120,220,\\fscx100\\fscy100)\\fad(0,200)}}"
+                  f"{strip_emoji(label).upper()}")
     chat_t0 = max(0, hype_t - 0.3)
     chat_ev = chat_events(meta.get("chat", []), chat_t0, pos["chat_y"])
     ev += chat_ev
@@ -491,6 +613,8 @@ def produce(raw, job, model="base"):
     T0, T1, T2, T3, A = h0 - 0.45, h0 + 0.45, h0 + 1.45, h0 + 3.45, 0.08
     z = (f"if(lt(t,{T0:.2f}),0,if(lt(t,{T1:.2f}),{A}*{S(f'(t-{T0:.2f})/0.9')},if(lt(t,{T2:.2f}),{A},"
          f"if(lt(t,{T3:.2f}),{A}*(1-{S(f'(t-{T2:.2f})/2')}),0))))")
+    if st["intro"]:
+        z = f"({z})+if(lt(t,0.35),0.22*(1-t/0.35)*(1-t/0.35),0)"
     cy = pos.get("focus_y", 960)
     zoom = (f"scale=w='2*trunc(540*(1+{z}))':h=-2:eval=frame,"
             f"crop=1080:1920:'(iw-1080)/2':'(ih-1920)*{cy / 1920:.3f}'")
@@ -508,9 +632,29 @@ def produce(raw, job, model="base"):
         add(KIT_SFX["swell"], 0.0, 0.25)
         for i in range(len(chat_ev)):
             add(KIT_SFX["pop"], chat_t0 + i * 0.55, 0.22)
+        if st["intro"]:
+            add(KIT_SFX["whoosh"], 0.0, 0.4)
     else:
         whoosh, hit = cf.make_sfx(job / "sfx")
         add(whoosh, h0 - 0.25, 0.5); add(hit, h0, 0.6)
+    vo_dur = 0.0
+    if st["voiceover"]:
+        import voice
+        who_vo = (meta.get("channel") or "the streamer").strip("_ ")
+        game_vo = meta.get("game_label") or ""
+        generic = {"", "just chatting", "games + demos", "irl", "variety", "live", "gaming"}
+        real_game = game_vo and game_vo.lower() not in generic and game_vo.lower() != who_vo.lower()
+        text = st["vo_text"] or (f"{who_vo} was playing {game_vo} when this happened." if real_game
+                                 else f"Watch what happened on {who_vo}'s stream.")
+        wav = voice.synth(text, job / "vo.wav")
+        if wav:
+            import wave
+            with wave.open(str(wav), "rb") as wf:
+                vo_dur = wf.getnframes() / float(wf.getframerate())
+            add(wav, 0.15, 1.15)
+            meta["vo_text_used"] = text
+        else:
+            log("  voiceover skipped: no TTS voice available")
     flash = KIT / "05 Transitions (white overlays)" / "White Flash - Quick (0.5s).mp4"
     grad = job / "grad.png"
     if not grad.exists():
@@ -523,16 +667,36 @@ def produce(raw, job, model="base"):
                 px[x, y] = (0, 0, 0, a)
         gim.save(grad)
     n_in = 1 + len(inputs)
-    fonts = os.path.relpath(cf.FONT_DIR, job).replace("\\", "/")
+    try:
+        fonts = os.path.relpath(cf.FONT_DIR, job).replace("\\", "/")
+    except ValueError:                                # clip folder on another drive: bring the fonts along
+        (job / "fonts").mkdir(exist_ok=True)
+        for f in Path(cf.FONT_DIR).glob("*.[ot]tf"):
+            shutil.copy2(f, job / "fonts" / f.name)
+        fonts = "fonts"
     vf = f"{g};[lay]{zoom}[zm];[zm][{n_in}:v]overlay=0:0[gr];"
     if flash.exists():
         vf += (f"[{n_in + 1}:v]fps=30,scale=1080:1920,format=gbrp,tpad=start_duration={h0:.2f}:stop_duration={dur:.2f}:color=black,"
                f"trim=0:{dur:.2f},setpts=PTS-STARTPTS[fl];[gr]format=gbrp[gb];[gb][fl]blend=all_mode=screen:shortest=1,format=yuv420p[fx];")
     else:
         vf += (f"[gr]drawbox=x=0:y=0:w=iw:h=ih:color=white@0.8:t=fill:enable='between(t,{h0:.2f},{h0 + 0.1:.2f})'[fx];")
-    vf += (f"[fx]drawbox=x=0:y=ih-12:w='iw*t/{dur:.2f}':h=12:color=0x00E5FF@0.95:t=fill,"
+    look = ""
+    w0, w1 = h0, h0 + 1.4
+    if st["color_fx"] == "red":                       # danger grade + red hit on the hype moment
+        look = (f"colorchannelmixer=rr=1.3:rg=0.1:gg=0.68:bb=0.68:enable='between(t,{w0:.2f},{w1:.2f})',"
+                f"vignette=PI/4:enable='between(t,{w0:.2f},{w1:.2f})',"
+                f"drawbox=x=0:y=0:w=iw:h=ih:color=red@0.35:t=fill:enable='between(t,{h0:.2f},{h0 + 0.12:.2f})',")
+    elif st["color_fx"] == "green":                   # win grade + green hit
+        look = (f"colorchannelmixer=rr=0.75:gg=1.3:gb=0.08:bb=0.75:enable='between(t,{w0:.2f},{w1:.2f})',"
+                f"vignette=PI/4:enable='between(t,{w0:.2f},{w1:.2f})',"
+                f"drawbox=x=0:y=0:w=iw:h=ih:color=0x22DD44@0.30:t=fill:enable='between(t,{h0:.2f},{h0 + 0.12:.2f})',")
+    if st["intro"]:
+        look += "gblur=sigma=16:steps=2:enable='lt(t,0.28)',"
+    look += f"drawbox=x=0:y=0:w=iw:h=ih:color={fx_rgb}@0.85:t=fill:enable='gt(t,{max(dur - 0.22, 0):.2f})',"
+    vf += (f"[fx]{look}drawbox=x=0:y=ih-12:w='iw*t/{dur:.2f}':h=12:color=0x00E5FF@0.95:t=fill,"
            f"ass=edit.ass:fontsdir={fonts},fade=t=in:st=0:d=0.25[v]")
-    a0 = ("[0:a]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=44100,aformat=channel_layouts=stereo[a0]" if pr["audio"]
+    duck = f",volume=0.3:enable='between(t,0.1,{vo_dur + 0.25:.2f})'" if vo_dur else ""
+    a0 = (f"[0:a]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=44100,aformat=channel_layouts=stereo{duck}[a0]" if pr["audio"]
           else f"anullsrc=r=44100:cl=stereo,atrim=0:{dur:.2f}[a0]")
     af = a0 + "".join(f";[{i}:a]aresample=44100,aformat=channel_layouts=stereo,adelay={d}|{d},volume={v}[s{i}]"
                       for i, d, v in sfx)

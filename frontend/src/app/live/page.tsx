@@ -29,7 +29,17 @@ type LiveClip = {
   virality?: Virality | null;
   social_copy?: SocialCopy | null;
   social_copy_edited?: string[];
+  style?: Partial<EditStyle>;
+  style_used?: EditStyle | null;
+  layout?: string | null;
+  detector?: string | null;
+  cam_box_found?: boolean | null;
 };
+type EditStyle = {
+  intro: boolean; captions: "pop" | "classic" | "off"; label: string; title_bar: boolean; bar_text: string;
+  color_fx: "auto" | "red" | "green" | "none"; voiceover: boolean; vo_text: string;
+};
+const STYLE_DEFAULTS: EditStyle = { intro: true, captions: "pop", label: "auto", title_bar: true, bar_text: "", color_fx: "auto", voiceover: false, vo_text: "" };
 type Virality = { score: number; grade: string; parts: { label: string; points: number; max: number; note: string }[] };
 type SocialCopy = {
   youtube: { title: string; description: string; tags: string[] };
@@ -371,11 +381,52 @@ function ClipCard({ clip: c, onAction, onPublish }: { clip: LiveClip; onAction: 
           <summary className="cursor-pointer font-medium">Transcript</summary>
           <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-muted-foreground">{c.transcript || "No speech detected in this clip (chat-only reaction)."}</p>
         </details>
+        {c.has_final && <StyleEditor key={`${c.rel}:${c.version}`} clip={c} base={base} onAction={onAction} />}
         {c.social_copy && <CaptionEditor key={JSON.stringify(c.social_copy)} clip={c} base={base} onAction={onAction} />}
         {pubs.length > 0 && <p className="text-xs text-muted-foreground">Published: {pubs.map(([p, r]) => r.url ? <a key={p} href={r.url} target="_blank" rel="noreferrer" className="mr-2 text-primary underline">{p}</a> : <span key={p} className="mr-2">{p}{r.ok ? " (queued)" : ""}</span>)}</p>}
         {c.render_error && c.status !== "needs_review" && <p className="max-h-20 overflow-auto whitespace-pre-wrap text-[11px] text-red-600">{c.render_error.slice(-300)}</p>}
       </div>
     </div>
+  );
+}
+
+function StyleEditor({ clip: c, base, onAction }: { clip: LiveClip; base: string; onAction: (path: string, body?: unknown) => Promise<void> }) {
+  const [st, setSt] = useState<EditStyle>({ ...STYLE_DEFAULTS, ...(c.style ?? {}) });
+  const set = <K extends keyof EditStyle>(k: K, v: EditStyle[K]) => setSt((o) => ({ ...o, [k]: v }));
+  const used = c.style_used;
+  const sel = "h-7 rounded-md border bg-background px-1.5 text-xs";
+  const row = "flex items-center justify-between gap-2";
+  return (
+    <details className="rounded-md border px-2 py-1 text-xs">
+      <summary className="cursor-pointer font-medium">Edit style (effects, captions, title, voice)</summary>
+      <div className="mt-2 space-y-1.5">
+        <p className="text-[11px] text-muted-foreground">
+          Layout: <b>{c.layout ?? "?"}</b>{c.detector ? ` · ${c.detector}` : ""}{c.cam_box_found ? " · webcam box found" : ""}
+          {used ? ` · now: ${used.color_fx} FX, ${used.captions} captions` : ""}
+        </p>
+        <div className={row}><span>Colour effect</span>
+          <select className={sel} value={st.color_fx} onChange={(e) => set("color_fx", e.target.value as EditStyle["color_fx"])}>
+            <option value="auto">Auto (shock red, hype green)</option><option value="red">🔴 Red</option>
+            <option value="green">🟢 Green</option><option value="none">None</option>
+          </select></div>
+        <div className={row}><span>Captions</span>
+          <select className={sel} value={st.captions} onChange={(e) => set("captions", e.target.value as EditStyle["captions"])}>
+            <option value="pop">Pop: 1–2 words, colour keywords</option><option value="classic">Classic: 3-word karaoke</option><option value="off">Off</option>
+          </select></div>
+        <div className={row}><span>Reaction label</span>
+          <Input className="h-7 w-40 text-xs" value={st.label} placeholder="off" onChange={(e) => set("label", e.target.value)} /></div>
+        <p className="text-[11px] text-muted-foreground">“auto” picks *LOCKED IN* / *DEAD* / *NO WAY* from chat; type your own or clear it to turn it off.</p>
+        <label className={row}><span>Zoom-blur intro + whoosh</span><Checkbox checked={st.intro} onCheckedChange={(v) => set("intro", Boolean(v))} /></label>
+        <label className={row}><span>Pinned title bar</span><Checkbox checked={st.title_bar} onCheckedChange={(v) => set("title_bar", Boolean(v))} /></label>
+        {st.title_bar && <Input className="h-7 text-xs" maxLength={60} value={st.bar_text} placeholder="Title bar text (empty = the hook)" onChange={(e) => set("bar_text", e.target.value)} />}
+        <label className={row}><span>AI voiceover (context line)</span><Checkbox checked={st.voiceover} onCheckedChange={(v) => set("voiceover", Boolean(v))} /></label>
+        {st.voiceover && <Input className="h-7 text-xs" maxLength={200} value={st.vo_text} placeholder="e.g. Speed was playing GTA 6 when this happened" onChange={(e) => set("vo_text", e.target.value)} />}
+        <div className="flex gap-1.5 pb-1">
+          <Button size="sm" className="h-7" onClick={() => onAction(`${base}/update`, { style: st })}>Apply & re-render</Button>
+          <Button size="sm" variant="ghost" className="h-7" onClick={() => setSt(STYLE_DEFAULTS)}>Reset</Button>
+        </div>
+      </div>
+    </details>
   );
 }
 
