@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Copy, Loader2, RefreshCw, Save } from "lucide-react";
+import { Loader2, RefreshCw, Save } from "lucide-react";
 import { toast } from "sonner";
 
+import { CopyShortcuts } from "@/components/app/copy-shortcuts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -47,7 +48,6 @@ export function SocialCopyPanel({ taskId, clipId }: { taskId: string; clipId: st
   const editable = data.source === "live" && Boolean(data.rel);
   const meta = PLATFORMS.find((p) => p.id === platform)!;
   const text = platform === "youtube" ? copy.youtube.description : copy[platform].caption;
-  const full = platform === "youtube" ? `${copy.youtube.title}\n\n${copy.youtube.description}` : text;
   const setText = (v: string) => setCopy((o) => (o ? (platform === "youtube"
     ? { ...o, youtube: { ...o.youtube, description: v } } : { ...o, [platform]: { caption: v } }) : o));
 
@@ -92,8 +92,8 @@ export function SocialCopyPanel({ taskId, clipId }: { taskId: string; clipId: st
         </span>
         {platform === "youtube" && <span className="truncate pl-2" title={copy.youtube.tags.join(", ")}>{copy.youtube.tags.length} tags</span>}
       </div>
+      <CopyShortcuts className="mt-2" platform={platform} title={copy.youtube.title} text={text} tags={copy.youtube.tags} />
       <div className="mt-2 flex flex-wrap gap-1.5">
-        <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(full); toast.success("Copied"); }}><Copy className="size-3.5" />Copy</Button>
         {editable && <>
           <Button size="sm" variant="outline" disabled={busy} onClick={() => post({ social_copy: { [platform]: copy[platform] } }, "Saved")}>
             {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}Save

@@ -211,14 +211,14 @@ export function ClipFocus({ clip, taskId, index, total, busy, editable, onNaviga
 
   return (
     <Dialog open={clip !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-h-[92dvh] max-w-5xl gap-0 overflow-hidden p-0 md:grid-cols-[auto_1fr]">
+      <DialogContent className="max-h-[92dvh] max-w-5xl gap-0 overflow-y-auto p-0 md:grid-cols-[auto_1fr] md:overflow-hidden">
         {clip && (
           <>
             <div className="relative flex items-center justify-center bg-stone-950 p-3 md:p-4">
               <DynamicVideoPlayer key={clip.id} src={getClipUrl(clip.video_url, clip.filename)} autoPlay className="h-[min(58dvh,560px)]! md:h-[min(80dvh,640px)]!" />
             </div>
-            <div className="flex min-h-0 flex-col overflow-y-auto">
-              <div className="flex items-center justify-between gap-2 border-b px-5 py-3 pr-12 text-xs text-muted-foreground">
+            <div className="flex min-h-0 flex-col md:max-h-[92dvh] md:overflow-y-auto">
+              <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-background px-5 py-3 pr-12 text-xs text-muted-foreground">
                 <span className="tabular-nums">{t("position", { current: index + 1, total })}</span>
                 <div className="flex items-center gap-1">
                   <Button size="icon-sm" variant="ghost" onClick={() => onNavigate(-1)} aria-label={t("previous")}><ChevronLeft className="size-4" /></Button>

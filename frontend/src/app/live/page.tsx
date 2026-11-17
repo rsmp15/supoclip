@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ExternalLink, FolderOpen, Loader2, Play, Radio, RefreshCw, Search, Square, Tv } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, ExternalLink, FolderOpen, Loader2, Play, Radio, RefreshCw, Search, Send, Square, Tv, X } from "lucide-react";
+
+import { ClipCover, ScoreRing } from "@/components/app/clip-cover";
+import { CopyShortcuts } from "@/components/app/copy-shortcuts";
+import DynamicVideoPlayer from "@/components/dynamic-video-player";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -113,6 +117,7 @@ export default function LivePage() {
   const [vod, setVod] = useState("");
   const [openLogs, setOpenLogs] = useState<Set<string>>(new Set());
   const [publishing, setPublishing] = useState<LiveClip | null>(null);
+  const [focusRel, setFocusRel] = useState<string | null>(null);
   const searched = useRef(false);
 
   const search = useCallback(async (q: string) => {
@@ -318,10 +323,18 @@ export default function LivePage() {
           {!shown.length ? (
             <p className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">No clips here yet. They appear as soon as chat explodes on a stream you are clipping.</p>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {shown.map((c) => <ClipCard key={`${c.rel}:${c.version}:${c.status}`} clip={c} onAction={act} onPublish={() => setPublishing(c)} />)}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              {shown.map((c) => <LiveTile key={`${c.rel}:${c.version}:${c.status}`} clip={c} onOpen={() => setFocusRel(c.rel)} onAction={act} />)}
             </div>
           )}
+          <LiveFocus
+            clips={shown}
+            rel={focusRel}
+            onNavigate={(rel) => setFocusRel(rel)}
+            onClose={() => setFocusRel(null)}
+            onAction={act}
+            onPublish={(c) => setPublishing(c)}
+          />
         </TabsContent>
 
         <TabsContent value="settings" className="mt-4">
@@ -341,69 +354,161 @@ function Stat({ v, l }: { v: string | number; l: string }) {
   return <div className="rounded-md bg-muted px-1 py-1.5"><b className="block text-base">{v}</b><span className="text-[11px] text-muted-foreground">{l}</span></div>;
 }
 
-function ClipCard({ clip: c, onAction, onPublish }: { clip: LiveClip; onAction: (path: string, body?: unknown) => Promise<void>; onPublish: () => void }) {
+function videoUrl(c: LiveClip) {
+  return `/api/live/clips/${clipPath(c.rel)}/video?v=${c.version}`;
+}
+
+/** Library-style tile: 9:16 cover, status + score ring, duration; click opens the popup. */
+function LiveTile({ clip: c, onOpen, onAction }: { clip: LiveClip; onOpen: () => void; onAction: (path: string, body?: unknown) => Promise<void> }) {
+  const busy = ["needs_edit", "rendering"].includes(c.status);
+  const base = `/api/live/clips/${clipPath(c.rel)}`;
+  return (
+    <article className="group">
+      <button type="button" onClick={onOpen} aria-label={`Open ${c.hook}`}
+        className="block w-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+        <ClipCover src={c.has_final && !busy ? videoUrl(c) : null}
+          className="aspect-[9/16] rounded-xl ring-1 ring-black/5 transition-shadow duration-200 group-hover:shadow-xl">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/25" />
+          <span className={cn("absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", CLIP_STYLE[c.status] ?? "bg-muted")}>{c.status.replace("_", " ")}</span>
+          {c.virality && <span className="absolute right-2 top-2 rounded-full bg-black/55 text-white backdrop-blur"><ScoreRing score={c.virality.score} size={36} /></span>}
+          {busy && <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs text-white"><Loader2 className="size-6 animate-spin" />{c.status === "rendering" ? "Rendering…" : "In render queue"}</span>}
+          {!busy && <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+            <span className="flex size-12 items-center justify-center rounded-full bg-white/90 text-black shadow-lg"><Play className="ml-0.5 size-5 fill-current" /></span>
+          </span>}
+          <span className="absolute bottom-2 right-2 rounded bg-black/60 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white">0:{String(Math.round(c.length || 0)).padStart(2, "0")}</span>
+        </ClipCover>
+      </button>
+      <div className="mt-2.5 px-0.5">
+        <h3 className="line-clamp-2 text-sm font-semibold leading-snug">{c.hook || c.yt_title}</h3>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{c.channel}{c.game ? ` · ${c.game}` : ""} · {c.created.slice(11, 16)}</p>
+        <div className="mt-2 flex items-center gap-1">
+          <Button size="sm" className="h-7 flex-1 bg-emerald-600 px-2 text-xs hover:bg-emerald-600/90" disabled={c.status !== "needs_review"}
+            onClick={() => onAction(`${base}/update`, { status: "approved" })}><Check className="size-3.5" />Approve</Button>
+          <Button size="icon-sm" variant="ghost" className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" aria-label="Reject"
+            disabled={!["needs_review", "approved"].includes(c.status)} onClick={() => onAction(`${base}/update`, { status: "rejected" })}><X className="size-3.5" /></Button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/** Library-style popup: video on the left, scrollable details on the right; ←/→ (or j/k) move between clips. */
+function LiveFocus({ clips, rel, onNavigate, onClose, onAction, onPublish }: {
+  clips: LiveClip[]; rel: string | null; onNavigate: (rel: string) => void; onClose: () => void;
+  onAction: (path: string, body?: unknown) => Promise<void>; onPublish: (c: LiveClip) => void;
+}) {
+  const index = clips.findIndex((c) => c.rel === rel);
+  const c = index >= 0 ? clips[index] : null;
+  const go = useCallback((delta: number) => {
+    if (!clips.length || index < 0) return;
+    onNavigate(clips[(index + delta + clips.length) % clips.length].rel);
+  }, [clips, index, onNavigate]);
+  useEffect(() => {
+    if (!c) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, select")) return;
+      if (e.key === "ArrowRight" || e.key === "j") { e.preventDefault(); go(1); }
+      if (e.key === "ArrowLeft" || e.key === "k") { e.preventDefault(); go(-1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [c, go]);
+  return (
+    <Dialog open={c !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[92dvh] max-w-5xl gap-0 overflow-y-auto p-0 md:grid-cols-[auto_1fr] md:overflow-hidden">
+        {c && <LiveClipDetails key={`${c.rel}:${c.version}:${c.status}`} clip={c} index={index} total={clips.length} onNavigate={go} onAction={onAction} onPublish={() => onPublish(c)} />}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LiveClipDetails({ clip: c, index, total, onNavigate, onAction, onPublish }: {
+  clip: LiveClip; index: number; total: number; onNavigate: (delta: number) => void;
+  onAction: (path: string, body?: unknown) => Promise<void>; onPublish: () => void;
+}) {
   const [hook, setHook] = useState(c.hook);
   const [title, setTitle] = useState(c.yt_title);
   const busy = ["needs_edit", "rendering"].includes(c.status);
   const base = `/api/live/clips/${clipPath(c.rel)}`;
   const pubs = Object.entries(c.published ?? {});
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-background">
-      <span className={cn("absolute left-2 top-2 z-10 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase", CLIP_STYLE[c.status] ?? "bg-muted")}>{c.status.replace("_", " ")}</span>
-      {c.virality && (
-        <span title={c.virality.parts.map((p) => `${p.label}: ${p.points}/${p.max} (${p.note})`).join("\n")}
-          className={cn("absolute right-2 top-2 z-10 rounded-full px-2 py-0.5 text-[11px] font-bold text-black", GRADE_STYLE[c.virality.grade] ?? "bg-muted")}>
-          🔥 {c.virality.score} · {c.virality.grade}
-        </span>
-      )}
-      {c.has_final && !busy ? (
-        <video src={`${base}/video?v=${c.version}`} controls preload="metadata" playsInline className="aspect-[9/16] max-h-[520px] w-full bg-black object-contain" />
-      ) : (
-        <div className="flex aspect-[9/16] max-h-[520px] w-full flex-col items-center justify-center gap-2 bg-muted text-sm text-muted-foreground">
-          {c.status === "edit_failed" ? "Render failed" : <><Loader2 className="size-6 animate-spin" />{c.status === "rendering" ? "Rendering…" : "In render queue"}</>}
-        </div>
-      )}
-      <div className="space-y-2 p-3">
-        <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          <Badge variant="secondary" className="h-5 px-1.5">{c.game || c.platform}</Badge>{c.channel} · {c.length || "?"}s · x{c.ratio ?? "?"} · {c.created.slice(11, 16)}
-        </p>
-        <p className="truncate text-xs text-muted-foreground">💬 {c.top_chat.join(" | ")}</p>
-        <label className="block text-[11px] uppercase tracking-wide text-muted-foreground">Hook (on screen, first 3 s)
-          <Input value={hook} onChange={(e) => setHook(e.target.value)} className="mt-1 h-8" /></label>
-        <label className="block text-[11px] uppercase tracking-wide text-muted-foreground">YouTube title
-          <Input value={title} maxLength={100} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-8" /></label>
-        <div className="flex flex-wrap gap-1.5">
-          <Button size="sm" variant="outline" onClick={() => onAction(`${base}/update`, { hook, yt_title: title })}>{busy ? "Save" : "Save & re-render"}</Button>
-          <Button size="sm" disabled={c.status !== "needs_review"} className="bg-emerald-600 hover:bg-emerald-600/90" onClick={() => onAction(`${base}/update`, { status: "approved", yt_title: title })}>Approve</Button>
-          <Button size="sm" variant="outline" disabled={!["needs_review", "approved"].includes(c.status)} onClick={() => onAction(`${base}/update`, { status: "rejected" })}>Reject</Button>
-          <Button size="sm" variant="secondary" disabled={c.status !== "approved"} onClick={onPublish}>Publish</Button>
-          {c.supoclip && <Button size="sm" variant="ghost" asChild><Link href={`/tasks/${c.supoclip.task_id}`}><FolderOpen className="size-3.5" /> Library</Link></Button>}
-        </div>
-        {c.virality && (
-          <details className="rounded-md border px-2 py-1 text-xs">
-            <summary className="cursor-pointer font-medium">Virality score {c.virality.score}/100 · grade {c.virality.grade}</summary>
-            <ul className="mt-1.5 space-y-1">
-              {c.virality.parts.map((p) => (
-                <li key={p.label}>
-                  <div className="flex justify-between"><span>{p.label}</span><b>{p.points}/{p.max}</b></div>
-                  <div className="h-1.5 rounded bg-muted"><div className="h-1.5 rounded bg-primary" style={{ width: `${(p.points / p.max) * 100}%` }} /></div>
-                  <span className="text-[11px] text-muted-foreground">{p.note}</span>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1 text-[11px] text-muted-foreground">A heuristic from the live-chat signal, not a view prediction.</p>
-          </details>
+    <>
+      <div className="relative flex items-center justify-center bg-stone-950 p-3 md:p-4">
+        {c.has_final && !busy ? (
+          <DynamicVideoPlayer key={c.rel + c.version} src={videoUrl(c)} autoPlay className="h-[min(58dvh,560px)]! md:h-[min(80dvh,640px)]!" />
+        ) : (
+          <div className="flex h-[min(58dvh,560px)] w-[min(32dvh,315px)] flex-col items-center justify-center gap-2 text-sm text-stone-400 md:h-[min(80dvh,640px)] md:w-[min(45dvh,360px)]">
+            {c.status === "edit_failed" ? "Render failed" : <><Loader2 className="size-6 animate-spin" />{c.status === "rendering" ? "Rendering…" : "In render queue"}</>}
+          </div>
         )}
-        <details className="rounded-md border px-2 py-1 text-xs">
-          <summary className="cursor-pointer font-medium">Transcript</summary>
-          <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-muted-foreground">{c.transcript || "No speech detected in this clip (chat-only reaction)."}</p>
-        </details>
-        {c.has_final && <StyleEditor key={`${c.rel}:${c.version}`} clip={c} base={base} onAction={onAction} />}
-        {c.social_copy && <CaptionEditor key={JSON.stringify(c.social_copy)} clip={c} base={base} onAction={onAction} />}
-        {pubs.length > 0 && <p className="text-xs text-muted-foreground">Published: {pubs.map(([p, r]) => r.url ? <a key={p} href={r.url} target="_blank" rel="noreferrer" className="mr-2 text-primary underline">{p}</a> : <span key={p} className="mr-2">{p}{r.ok ? " (queued)" : ""}</span>)}</p>}
-        {c.render_error && c.status !== "needs_review" && <p className="max-h-20 overflow-auto whitespace-pre-wrap text-[11px] text-red-600">{c.render_error.slice(-300)}</p>}
       </div>
-    </div>
+      <div className="flex min-h-0 flex-col md:max-h-[92dvh] md:overflow-y-auto">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-background px-5 py-3 pr-12 text-xs text-muted-foreground">
+          <span className="tabular-nums">Clip {index + 1} of {total}</span>
+          <div className="flex items-center gap-1">
+            <Button size="icon-sm" variant="ghost" onClick={() => onNavigate(-1)} aria-label="Previous clip"><ChevronLeft className="size-4" /></Button>
+            <Button size="icon-sm" variant="ghost" onClick={() => onNavigate(1)} aria-label="Next clip"><ChevronRight className="size-4" /></Button>
+          </div>
+        </div>
+        <div className="space-y-5 p-5">
+          <div>
+            <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase", CLIP_STYLE[c.status] ?? "bg-muted")}>{c.status.replace("_", " ")}</span>
+            <DialogTitle className="mt-2 font-display text-xl font-bold leading-tight">{c.hook || c.yt_title}</DialogTitle>
+            <DialogDescription className="mt-1 text-xs">
+              {c.channel}{c.game ? ` · ${c.game}` : ""} · {c.length || "?"}s · chat x{c.ratio ?? "?"} · {c.created.slice(11, 16)}
+            </DialogDescription>
+            <p className="mt-1 truncate text-xs text-muted-foreground">💬 {c.top_chat.join(" | ")}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <Button size="sm" disabled={c.status !== "needs_review"} className="bg-emerald-600 hover:bg-emerald-600/90" onClick={() => onAction(`${base}/update`, { status: "approved", yt_title: title })}><Check className="size-4" />Approve</Button>
+            <Button size="sm" variant="outline" disabled={!["needs_review", "approved"].includes(c.status)} onClick={() => onAction(`${base}/update`, { status: "rejected" })}><X className="size-4" />Reject</Button>
+            <Button size="sm" variant="secondary" disabled={c.status !== "approved"} onClick={onPublish}><Send className="size-4" />Publish</Button>
+            {c.has_final && <Button size="sm" variant="outline" asChild><a href={videoUrl(c)} download={`${c.rel.split("/").pop()}.mp4`}><Download className="size-4" />Download</a></Button>}
+            {c.supoclip && <Button size="sm" variant="ghost" asChild><Link href={`/tasks/${c.supoclip.task_id}`}><FolderOpen className="size-4" />Library</Link></Button>}
+            {c.supoclip && <Button size="sm" variant="ghost" asChild><Link href={`/tasks/${c.supoclip.task_id}/edit?clip=${c.supoclip.clip_id}`}>Open in editor</Link></Button>}
+          </div>
+          <section className="space-y-2 rounded-xl border p-4">
+            <label className="block text-[11px] uppercase tracking-wide text-muted-foreground">Hook (on screen, first 3 s)
+              <Input value={hook} onChange={(e) => setHook(e.target.value)} className="mt-1 h-8" /></label>
+            <label className="block text-[11px] uppercase tracking-wide text-muted-foreground">YouTube title
+              <Input value={title} maxLength={100} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-8" /></label>
+            <Button size="sm" variant="outline" onClick={() => onAction(`${base}/update`, { hook, yt_title: title })}>{busy ? "Save" : "Save & re-render"}</Button>
+          </section>
+          {c.virality && (
+            <section className="rounded-xl border p-4">
+              <div className="flex items-center gap-4">
+                <ScoreRing score={c.virality.score} size={56} className="text-foreground [&>span]:text-base" />
+                <div>
+                  <p className="text-sm font-semibold">Virality score · grade {c.virality.grade}</p>
+                  <p className="text-xs text-muted-foreground">From the live-chat signal, not a view prediction</p>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3">
+                {c.virality.parts.map((p) => (
+                  <div key={p.label} className="space-y-1.5" title={p.note}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">{p.label}</span>
+                      <span className="font-medium tabular-nums">{p.points}/{p.max}</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-foreground" style={{ width: `${(p.points / p.max) * 100}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+          <section>
+            <h3 className="text-sm font-semibold">Transcript</h3>
+            <p className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-xl bg-muted/60 p-3 text-sm text-muted-foreground">{c.transcript || "No speech detected in this clip (chat-only reaction)."}</p>
+          </section>
+          {c.social_copy && <CaptionEditor key={JSON.stringify(c.social_copy)} clip={c} base={base} onAction={onAction} />}
+          {c.has_final && <StyleEditor key={`${c.rel}:${c.version}`} clip={c} base={base} onAction={onAction} />}
+          {pubs.length > 0 && <p className="text-xs text-muted-foreground">Published: {pubs.map(([p, r]) => r.url ? <a key={p} href={r.url} target="_blank" rel="noreferrer" className="mr-2 text-primary underline">{p}</a> : <span key={p} className="mr-2">{p}{r.ok ? " (queued)" : ""}</span>)}</p>}
+          {c.render_error && c.status !== "needs_review" && <p className="max-h-20 overflow-auto whitespace-pre-wrap text-[11px] text-red-600">{c.render_error.slice(-300)}</p>}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -500,7 +605,6 @@ function CaptionEditor({ clip: c, base, onAction }: { clip: LiveClip; base: stri
   const setText = (v: string) => setCopy((o) => (platform === "youtube"
     ? { ...o, youtube: { ...o.youtube, description: v } }
     : { ...o, [platform]: { caption: v } }));
-  const full = platform === "youtube" ? `${copy.youtube.title}\n\n${copy.youtube.description}` : text;
   const edited = (c.social_copy_edited ?? []).includes(platform);
   return (
     <details className="rounded-md border px-2 py-1 text-xs" open>
@@ -520,6 +624,7 @@ function CaptionEditor({ clip: c, base, onAction }: { clip: LiveClip; base: stri
       )}
       <textarea value={text} onChange={(e) => setText(e.target.value)} rows={platform === "tiktok" ? 3 : 7}
         className="mt-1.5 w-full rounded-md border bg-background p-1.5 text-xs leading-snug" />
+      <CopyShortcuts className="mt-1.5" platform={platform} title={copy.youtube.title} text={text} tags={copy.youtube.tags} />
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span className={cn(text.length > limit.max && "text-red-600", limit.ideal && text.length > limit.ideal && "text-amber-600")}>
           {text.length}/{limit.max}{limit.ideal ? ` · best under ~${limit.ideal}` : ""}{edited ? " · edited" : " · auto"}
@@ -527,7 +632,6 @@ function CaptionEditor({ clip: c, base, onAction }: { clip: LiveClip; base: stri
         {platform === "youtube" && <span className="truncate pl-2" title={copy.youtube.tags.join(", ")}>{copy.youtube.tags.length} tags</span>}
       </div>
       <div className="mt-1.5 flex flex-wrap gap-1.5 pb-1">
-        <Button size="sm" variant="outline" className="h-7" onClick={() => { navigator.clipboard.writeText(full); toast.success("Copied"); }}>Copy</Button>
         <Button size="sm" variant="outline" className="h-7" onClick={() => onAction(`${base}/update`, { social_copy: { [platform]: copy[platform] } })}>Save</Button>
         <Button size="sm" variant="ghost" className="h-7" onClick={() => onAction(`${base}/update`, { regenerate_copy: platform })}>Regenerate</Button>
       </div>
